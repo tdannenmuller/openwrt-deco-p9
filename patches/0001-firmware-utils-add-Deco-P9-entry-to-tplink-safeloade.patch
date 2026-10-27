@@ -1,0 +1,107 @@
+From b20ca7343a1440476f3226f3522c63c5f21ed5d9 Mon Sep 17 00:00:00 2001
+From: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
+Date: Tue, 27 Oct 2026 12:46:31 +0000
+Subject: [PATCH 1/2] firmware-utils: add Deco P9 entry to tplink-safeloader
+
+Add a patch that adds the DECO-P9-V1V2 board to tplink-safeloader.
+Flash layout is copied from the Deco M4R v1 entry. The support list
+comes from the openwrt-deco-m4-v1v2 fork and is not yet checked
+against OEM P9 firmware.
+
+Claude-Session: https://claude.ai/code/session_01PbQyyR6aNqz2qpD4PjFd8q
+Signed-off-by: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
+---
+ tools/firmware-utils/Makefile                 |  2 +-
+ .../001-tplink-safeloader-add-deco-p9.patch   | 67 +++++++++++++++++++
+ 2 files changed, 68 insertions(+), 1 deletion(-)
+ create mode 100644 tools/firmware-utils/patches/001-tplink-safeloader-add-deco-p9.patch
+
+diff --git a/tools/firmware-utils/Makefile b/tools/firmware-utils/Makefile
+index da84e6f164..30097193b1 100644
+--- a/tools/firmware-utils/Makefile
++++ b/tools/firmware-utils/Makefile
+@@ -7,7 +7,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=firmware-utils
+-PKG_RELEASE:=1
++PKG_RELEASE:=2
+ 
+ PKG_SOURCE_PROTO:=git
+ PKG_SOURCE_URL=$(PROJECT_GIT)/project/firmware-utils.git
+diff --git a/tools/firmware-utils/patches/001-tplink-safeloader-add-deco-p9.patch b/tools/firmware-utils/patches/001-tplink-safeloader-add-deco-p9.patch
+new file mode 100644
+index 0000000000..84ed5cdbea
+--- /dev/null
++++ b/tools/firmware-utils/patches/001-tplink-safeloader-add-deco-p9.patch
+@@ -0,0 +1,67 @@
++From 61825a2d584b4a2b8984e4f2f2a7e68439c27627 Mon Sep 17 00:00:00 2001
++From: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
++Date: Tue, 27 Oct 2026 12:46:13 +0000
++Subject: [PATCH] tplink-safeloader: add TP-Link Deco P9
++
++Add the DECO-P9-V1V2 board entry. Flash layout is the same as Deco M4R v1. Support list taken from the dietcoke73 openwrt-deco-m4-v1v2 fork (not yet verified against OEM firmware).
++---
++ src/tplink-safeloader.c | 43 +++++++++++++++++++++++++++++++++++++++++
++ 1 file changed, 43 insertions(+)
++
++diff --git a/src/tplink-safeloader.c b/src/tplink-safeloader.c
++index b7c73c4..1afa7e1 100644
++--- a/src/tplink-safeloader.c
+++++ b/src/tplink-safeloader.c
++@@ -1807,6 +1807,49 @@ static struct device_info boards[] = {
++ 		.last_sysupgrade_partition = "file-system",
++ 	},
++ 
+++	/** Firmware layout for the Deco P9 (same flash layout as Deco M4R v1) */
+++	{
+++		.id     = "DECO-P9-V1V2",
+++		.vendor = "",
+++		.support_list =
+++			"SupportList:\n"
+++			"{product_name:P9,product_ver:1.0.0,special_id:55530000}\n"
+++			"{product_name:P9,product_ver:1.0.0,special_id:45550000}\n"
+++			"{product_name:P9,product_ver:1.0.0,special_id:43410000}\n"
+++			"{product_name:P9,product_ver:1.0.0,special_id:4A500000}\n"
+++			"{product_name:P9,product_ver:1.0.0,special_id:41550000}\n"
+++			"{product_name:P9,product_ver:1.0.0,special_id:4B520000}\n"
+++			"{product_name:P9,product_ver:2.0.0,special_id:55530000}\n"
+++			"{product_name:P9,product_ver:2.0.0,special_id:45550000}\n"
+++			"{product_name:P9,product_ver:2.0.0,special_id:43410000}\n"
+++			"{product_name:P9,product_ver:2.0.0,special_id:4A500000}\n"
+++			"{product_name:P9,product_ver:2.0.0,special_id:41550000}\n"
+++			"{product_name:P9,product_ver:2.0.0,special_id:4B520000}\n",
+++		.part_trail = 0x00,
+++		.soft_ver = SOFT_VER_DEFAULT,
+++
+++		.partitions = {
+++			{"fs-uboot", 0x00000, 0x80000},
+++			{"firmware", 0x80000, 0xe00000},
+++			{"product-info", 0xe80000, 0x05000},
+++			{"default-mac", 0xe85000, 0x01000},
+++			{"device-id", 0xe86000, 0x01000},
+++			{"support-list", 0xe87000, 0x10000},
+++			{"user-config", 0xea7000, 0x10000},
+++			{"device-config", 0xeb7000, 0x10000},
+++			{"group-info", 0xec7000, 0x10000},
+++			{"partition-table", 0xed7000, 0x02000},
+++			{"soft-version", 0xed9000, 0x10000},
+++			{"profile", 0xee9000, 0x10000},
+++			{"default-config", 0xef9000, 0x10000},
+++			{"url-sig", 0xfe0000, 0x10000},
+++			{"radio", 0xff0000, 0x10000},
+++			{NULL, 0, 0}
+++		},
+++		.first_sysupgrade_partition = "os-image",
+++		.last_sysupgrade_partition = "file-system",
+++	},
+++
++ 	/** Firmware layout for the Deco M4R v4 */
++ 	{
++ 		.id     = "DECO-M4R-V4",
++-- 
++2.43.0
++
+-- 
+2.43.0
+
