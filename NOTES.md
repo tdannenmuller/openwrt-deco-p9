@@ -135,6 +135,38 @@ Le fork utilisait la variante non-ct. Je n'ai pas vérifié si QCA9886 se compor
 4. Rootfs : `binwalk` ou `unsquashfs -s` sur la partie squashfs. Le magic `hsqs` doit être présent et la partition doit finir en `0xe80000` au plus.
 5. Compare les octets de l'en-tête (`xxd | head`) des deux factory.
 
+## Méthode TFTP (à privilégier si le flash par l'interface web est ignoré)
+
+Constat : le firmware d'origine 1.3.0 a ignoré notre image factory sans message d'erreur. Il contient `fw-type:Cloud` et un bloc final de 4 Ko qui ressemble à une signature, que notre image n'a pas (hypothèse, non confirmée).
+
+Source : [guide selfhosthero pour le M4R](https://selfhosthero.com/openwrt-tp-link-deco-m4r/), qui utilise le fichier `deco_all_webfailsafe_faux_fw_tftp_v2.bin` du développeur « naf » (forum OpenWrt). **Non vérifié sur le P9.** Je n'ai pas ce fichier et je n'ai pas pu l'inspecter.
+
+Principe : le mode récupération du Deco (bouton reset au branchement) propose une page web `192.168.0.1`. Le faux firmware fait télécharger par TFTP un fichier `initramfs-kernel.bin` depuis `192.168.0.2`. OpenWrt démarre alors **en RAM seulement**. Rien n'est écrit dans la flash tant qu'on ne lance pas le sysupgrade.
+
+Étapes (adaptées à notre image) :
+1. Avant tout, vérifie le fichier exploit : télécharge-le depuis le message d'origine sur le forum OpenWrt et envoie-le-moi. Je regarde sa liste de support : si elle ne contient pas `P9`, la page de récupération le refusera.
+2. Sur le Mac : Ethernet direct vers le Deco, IP fixe `192.168.0.2`, masque `255.255.255.0`, sans routeur. Serveur TFTP sur le port 69 qui sert un fichier nommé exactement `initramfs-kernel.bin` : copie dedans `openwrt-ath79-generic-tplink_deco-p9-v1v2-initramfs-kernel.bin` renommé. Le TFTP intégré à macOS ou `dnsmasq` conviennent. Pare-feu désactivé. Non testé de mon côté.
+3. Deco débranché, appuie sur reset avec un trombone, rebranche en gardant reset appuyé 10 à 15 secondes, jusqu'à ce que la LED s'éteigne.
+4. Ouvre `http://192.168.0.1`, envoie le faux firmware. « Upgrade Failed » est le résultat attendu. Le Deco télécharge alors `initramfs-kernel.bin` et démarre dessus.
+5. IP du Mac en DHCP, puis ouvre `http://192.168.1.1` (sans mot de passe). Mets un mot de passe root dans Système > Administration pour pouvoir utiliser SSH.
+
+**Sauvegarde complète sans soudure** (à faire ici, avant l'étape 6, depuis le système en RAM) : la table des partitions du dts couvre toute la flash de 16 Mo (u-boot, firmware, product-info, config, art). Depuis le Mac :
+```sh
+ssh root@192.168.1.1 'cat /proc/mtd' | tee mtd-liste.txt
+for n in 0 1 2 3 4; do ssh root@192.168.1.1 "cat /dev/mtd${n}ro" > mtd$n.bin; done
+for n in 0 1 2 3 4; do ssh root@192.168.1.1 "cat /dev/mtd${n}ro" | shasum -a 256; done; shasum -a 256 mtd*.bin
+```
+Les deux séries de SHA256 doivent être identiques. Vérifie que la somme des tailles fait 16 777 216 octets. Garde les fichiers en deux endroits. Cette sauvegarde est celle du firmware d'origine, `art` comprise.
+
+6. Seulement après la sauvegarde : LuCI > Système > Sauvegarde / Flasher le firmware, choisis le fichier **sysupgrade**, **décoche « Conserver la configuration »**, puis lance. Compte 3 minutes sans couper le courant.
+
+Si le courant est coupé avant l'étape 6, l'appareil retrouve le firmware d'origine : on recommence à l'étape 3.
+
+Risques propres à cette méthode :
+- On exécute un fichier binaire tiers. Ne l'utilise qu'après que je l'aie inspecté.
+- Notre initramfs contient LuCI et fait 7,5 Mo, plus gros que celui du guide. Je ne sais pas si le chargeur TFTP du Deco l'accepte.
+- Le geste exact du bouton reset sur le P9 n'est pas vérifié.
+
 ## Flasher (à faire seulement après sauvegarde)
 
 1. Le **sysupgrade** ne sert que si OpenWrt tourne déjà. Depuis le firmware d'origine, il faut le **factory**.
