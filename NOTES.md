@@ -208,13 +208,43 @@ Les partitions `art`, `config`, `product-info` sont les plus importantes. **Sans
 4. Dernier recours : réécrire la sauvegarde complète avec `flashrom -p ch341a_spi -w deco_p9_full_1.bin`.
 5. Si `art` est perdue : aucune image ne la remplace. Seule la sauvegarde permet de restaurer le Wi-Fi.
 
+## Journal des essais sur matériel réel (27-28/10/2026)
+
+- **Flash par l'interface web du firmware d'origine (1.3.0) : refusé.** Aucun message d'erreur, mais au redémarrage le Deco était toujours sur le firmware d'origine. Rien n'a été écrit (comportement sans risque). Hypothèse retenue : le firmware d'origine vérifie une signature que notre image n'a pas (voir « Méthode TFTP » ci-dessus pour le détail de la comparaison d'en-têtes).
+- **Flash par TFTP avec l'exploit `naf419/tplink_deco_exploits` (fichier `deco_all_webfailsafe_faux_fw_tftp_v2.bin`) : fonctionne.** Le fichier a été vérifié avant usage : ses seules chaînes lisibles sont les commandes U-Boot `setenv serverip/ipaddr`, `tftpboot` et `bootm`, sans aucune commande d'écriture flash (`erase`, `cp.b`, `mtd`, `nand`). Le dépôt liste explicitement le Deco P9 v1.80 et v2.0 pour cette méthode.
+- **Sauvegarde complète des 5 partitions (`mtd0` à `mtd4`, dont `art` et `config`) faite depuis le système démarré en RAM, avant toute écriture.** Les SHA256 ont été vérifiés deux fois (lecture directe + copie locale) avant de continuer. C'est la seule méthode qui donne une sauvegarde complète du firmware d'origine sans soudure.
+- **Sysupgrade (sans conserver la configuration) : a tenu.** Redémarrage confirmé sur OpenWrt après coupure du courant. L'installation est permanente.
+- **Gestionnaire de paquets : `apk`, pas `opkg`**, sur cette version de main (confirmé par le manifeste du build et par l'appareil).
+- **Wi-Fi client (mode station) vers une Livebox 4 : fonctionne.**
+
+## Extension Wi-Fi d'une Livebox 4 avec relayd
+
+But : prolonger le Wi-Fi de la Livebox via le Deco, même sous-réseau, sans mesh (la Livebox ne parle pas les protocoles mesh d'OpenWrt) et sans double NAT.
+
+### Ce qui ne fonctionnait pas, et pourquoi
+
+Premier essai : interface `wwan` en client vers la Livebox (`192.168.0.1/24`), interface `relay_bridge` (protocole « Relay bridge », paquet `relayd`) regroupant `lan` et `wwan`, mais `lan` restée à son adresse d'usine OpenWrt `192.168.1.1/24` avec son propre serveur DHCP actif.
+
+Résultat : `relay_bridge` restait sans adresse IP (« Carrier: Absent »). `relayd` relie deux segments au niveau 2 et fait transiter les requêtes DHCP entre eux, mais ne change rien aux adresses IP : il faut que les deux côtés soient le même sous-réseau. Comme le serveur DHCP du Deco, toujours actif sur `lan`, répondait immédiatement aux appareils connectés en `192.168.1.x`, aucune requête n'avait de raison de passer par le relais vers la Livebox (en `192.168.0.0/24`). `relay_bridge` n'avait donc jamais l'occasion de s'y rattacher.
+
+### Ce qui a corrigé le problème
+
+1. Interface `lan` passée en IP statique dans le sous-réseau de la Livebox (`192.168.0.0/24`), hors de sa plage DHCP, avec passerelle et DNS pointant sur la Livebox (`192.168.0.1`).
+2. Serveur DHCP désactivé sur `lan` (case « Ignorer cette interface »), pour que seule la Livebox distribue des adresses.
+3. `wwan` reste en protocole « Non géré » (`none`), sans IP propre : c'est `relayd`, via `relay_bridge`, qui gère l'adresse pour l'ensemble du pont.
+
+Après ce changement : `relay_bridge` a obtenu une adresse, et les appareils connectés au Deco (Ethernet ou Wi-Fi local sur l'autre bande) reçoivent une adresse `192.168.0.x` distribuée par la Livebox.
+
+**Non vérifié** : la stabilité dans la durée du pont relais, le roaming entre la Livebox et le Deco quand un appareil se déplace (pas de 802.11r/k configuré), et le comportement si la Livebox change de canal ou redémarre.
+
 ## Liste de ce qui n'est PAS vérifié
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).
-- Que le firmware d'origine accepte l'image factory.
-- Que l'image démarre (le build passe, mais aucun test matériel).
+- Confirmé : le firmware d'origine 1.3.0 refuse l'image factory sans erreur visible (voir journal). La méthode TFTP contourne ce blocage.
 - Le numéro de port du CPL, et le fonctionnement du CPL.
 - Les LED : seule la LED d'alimentation et la LED 5 GHz du M4R sont définies. La LED rouge 2,4 GHz (GPIO 1) n'est pas reprise.
 - Le sysupgrade depuis une installation faite avec le fork sans `-F`.
 - Le Wi-Fi 2,4 GHz et 5 GHz avec ath10k-ct sur le QCA9886.
 - L'accès UART et la récupération TFTP.
+- Le sysupgrade via l'interface web du firmware d'origine (contourné par la méthode TFTP, jamais testé directement).
+- La stabilité du pont relayd dans la durée, et le roaming entre la Livebox et le Deco.
