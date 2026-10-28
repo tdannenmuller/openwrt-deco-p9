@@ -298,6 +298,33 @@ Après ce changement : `relay_bridge` a obtenu une adresse, et les appareils con
 
 **Non vérifié** : la stabilité dans la durée du pont relais, le roaming entre la Livebox et le Deco quand un appareil se déplace (pas de 802.11r/k configuré), et le comportement si la Livebox change de canal ou redémarre.
 
+## Second Deco en bridge simple, par le CPL (28/10/2026)
+
+Deux Deco P9 sous OpenWrt, reliés par le CPL (même NMK, voir « CPL »). Le premier (`192.168.0.2`) est un relais Wi-Fi vers la Livebox (`relayd`). Le second (`192.168.0.6`) est un point d'accès en **bridge simple** : il n'a plus de DHCP ni de pare-feu et laisse tout à la Livebox.
+
+Configuration du second Deco :
+- `network.lan` : `proto static`, `ipaddr 192.168.0.6`, `netmask 255.255.255.0`, `gateway` et `dns 192.168.0.1`, sans `ip6assign`.
+- Switch : `ports='2 3 5 0t'` (le port 2 est le CPL). Pas de câble vers la Livebox : le CPL est le seul lien montant (sinon boucle réseau).
+- DHCP : `dhcp.lan.ignore='1'`, `dhcpv6` et `ra` à `disabled`. `firewall`, `dnsmasq` et `odhcpd` désactivés au démarrage (`/etc/init.d/<service> disable`).
+- Wi-Fi : même SSID et même clé que le premier Deco, `country FR`. Canaux différents pour ne pas se gêner : 5 GHz canal 36 et 2,4 GHz canal 11 (le premier est sur 5 GHz canal 112 et 2,4 GHz canal 1).
+
+Vérifié après un redémarrage à froid : adresse et passerelle en place, ping de la Livebox en environ 5 ms à travers le CPL, aucun DHCP local, et un Mac branché en Ethernet sur le port 3 a reçu `192.168.0.60` de la **Livebox**. Le premier Deco voit le second à son MAC (`00:31:92:22:a0:40`).
+
+Pas vérifié : un appareil en Wi-Fi sur le second Deco, la stabilité dans la durée, le roaming entre les deux Deco (non configuré), et l'adresse IP `192.168.0.6` hors de la plage DHCP de la Livebox (j'ai évité `192.168.0.4`, déjà prise par une autre machine du réseau).
+
+### Incident : le redémarrage du réseau par SSH peut figer un Deco
+
+En appliquant cette configuration au second Deco avec `/etc/init.d/network restart` suivi de `wifi reload` (lancés en arrière-plan depuis une session SSH), le Deco a cessé de répondre sur `192.168.1.1` comme sur `192.168.0.6`, et n'est revenu qu'après une coupure d'alimentation (hard restart). L'utilisateur a constaté que le même `network restart` par SSH plante aussi le premier Deco. La cause n'est **pas diagnostiquée** : aucun log n'a été conservé (la RAM est perdue au redémarrage).
+
+À l'inverse, `/etc/init.d/network reload` lancé en SSH a fonctionné sans problème sur les deux Deco pour la seule correction du VLAN (`ports='2 3 5 0t'`) ; ce n'est pas la même opération qu'un `restart` avec changement d'adresse IP et de Wi-Fi.
+
+Précautions pour la suite :
+- Éviter `network restart` à distance ; préférer `reload`, ou redémarrer le Deco avec `reboot` après avoir enregistré la configuration (`uci commit`).
+- Armer un retour arrière **avant** de changer l'adresse IP ou le Wi-Fi, et vérifier qu'il tourne. Ici, un minuteur en RAM (`sleep 600` puis restauration de `/etc/config`) n'a pas permis de retrouver le Deco ; il ne protège pas d'un figement complet ni d'un redémarrage.
+- Sauvegarder `/etc/config` avant (fait ici dans `/root/backup-avant-bridge/`, sur la flash).
+- Un script avec `set -e` s'est arrêté en cours de route à cause d'un `uci -q delete` d'une option absente (code de retour 1) : ne pas combiner `set -e` et `uci delete`.
+- L'accès SSH par une nouvelle adresse IP demande d'accepter la clé de l'hôte (`ssh -o StrictHostKeyChecking=accept-new`) ; un script en `BatchMode` échoue sinon.
+
 ## Liste de ce qui n'est PAS vérifié
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).
@@ -309,3 +336,4 @@ Après ce changement : `relay_bridge` a obtenu une adresse, et les appareils con
 - L'accès UART et la récupération TFTP.
 - Le sysupgrade via l'interface web du firmware d'origine (contourné par la méthode TFTP, jamais testé directement).
 - La stabilité du pont relayd dans la durée, et le roaming entre la Livebox et le Deco.
+- La cause du figement d'un Deco au `network restart` par SSH, et le Wi-Fi du second Deco en bridge (voir « Second Deco en bridge simple »).
