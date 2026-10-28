@@ -65,7 +65,7 @@ Choix de réutilisation :
 
 ## Ce qui est écarté, et pourquoi
 
-- **Port switch du CPL (groupe b)** : écarté du réglage par défaut. Voir « CPL » plus bas. Tu veux pouvoir l'activer, donc la procédure est documentée.
+- **Port switch du CPL (groupe b)** : écarté du réglage par défaut. Voir « CPL » plus bas (port 2 vérifié, procédure d'activation corrigée).
 - **FastPath / shortcut-fe (groupe c)** : écarté. Code lié au noyau 5.4, non maintenu, absent de main, source de bugs. Le fork lui-même l'a supprimé dans « move Deco-P9 to master ».
 - **LED `red:wlan2g` sur le GPIO 1** : écartée. Elle est dans le dts du fork mais absente du M4R de main. Je ne peux pas confirmer le GPIO.
 - **Modifs de `config-5.4` / `config-5.10`** : écartées, bruit de rebase du fork, sans lien avec l'appareil.
@@ -74,28 +74,90 @@ Choix de réutilisation :
 ## Problèmes trouvés dans le fork
 
 - L'entrée safeloader finale du fork a des virgules en trop à la fin de chaque ligne de la liste de support. Je n'ai pas testé si elle compile ; je l'ai corrigée (virgule seulement à la fin). Les valeurs n'ont pas changé.
-- Le port switch du CPL est passé de **4** à **2** entre deux commits du fork, sans explication.
+- Le port switch du CPL est passé de **4** à **2** entre deux commits du fork, sans explication. Le port 2 est le bon (vérifié sur le matériel).
 
-## CPL : activer ou désactiver
+## CPL : activer, désactiver, configurer
 
-Par défaut le switch ne met que les ports 3 et 5 dans le LAN. Le port du CPL reste donc isolé (désactivé).
+### Réseau (switch)
 
-Pour **activer** (à adapter après avoir regardé `uci show network | grep -B1 -A4 switch_vlan`) :
+Le CPL est sur le **port 2** du switch (vérifié le 28/10/2026 : lien actif à 1000 Mbit/s sans câble branché, ports 4 et autres à l'arrêt). Par défaut le switch ne met que les ports 3 et 5 dans le LAN, donc le port 2 reste isolé.
+
+**Piège** : les ports doivent être dans **une seule valeur** `option ports`. Avec `list ports '3 5 0t'` plus `list ports '2'` (ce que faisait la commande `uci add_list` des anciennes notes), le VLAN 1 du switch restait **vide** (`swconfig dev switch0 vlan 1 show` affichait `ports:` sans rien) : même les ports 3 et 5 n'étaient plus dans le LAN. Le Deco restait joignable seulement parce qu'il passe par le Wi-Fi (relayd). Je n'ai pas testé `list ports '3 5 0t'` seul : la cause exacte (liste de deux entrées, ou entrée contenant des espaces) n'est pas isolée ; la valeur unique `'2 3 5 0t'` fonctionne.
+
+Pour **activer** :
 ```sh
-uci add_list network.@switch_vlan[0].ports='2'   # port 2 = dernière valeur du fork
-uci commit network && /etc/init.d/network restart
+uci delete network.@switch_vlan[0].ports
+uci set network.@switch_vlan[0].ports='2 3 5 0t'
+uci commit network && /etc/init.d/network reload
+swconfig dev switch0 vlan 1 show     # attendu : ports: 0t 2 3 5
 ```
-Pour **désactiver** :
+Pour **désactiver** : même commande avec `ports='3 5 0t'`.
+
+### La puce CPL est un Broadcom (pas Qualcomm)
+
+`open-plc-utils` (`plctool`) ne marche **pas** : il parle le protocole Qualcomm/Atheros (ethertype `0x88e1`, OUI `00:B0:52`) et la puce ne répond pas. Elle répond en revanche à des trames HomePlug AV standard (`CC_DISCOVER_LIST`) et au protocole propriétaire ci-dessous. Le firmware d'origine (`libplcapi.so`, `plcManager`) gère les deux familles. Le chiffrement « Broadcom » est une déduction (ethertype `0x8912` et OUI `00:1F:84`, lu dans `hpMakeBCMPacket`) ; je n'ai pas vu la référence de la puce.
+
+Le stock ne pilote **aucun GPIO** pour le CPL : il lui parle par des trames brutes sur le port 2 (interface `eth0-p2`). Le MAC de la puce est le MAC LAN du Deco **+ 5** (règle du script `plc_mac_fix` du stock ; ici `1c:3b:f3:16:d2:c8` + 5 = `1c:3b:f3:16:d2:cd`).
+
+### Protocole Broadcom (déduit du désassemblage de `libplcapi.so`)
+
+Source : fonctions `hpMakeBCMPacket`, `hpBCMPushButtonStart`, `hpGetBCMNmk`, `hpSetBCMNmk` (firmware 1.3.0, désassemblées avec `llvm-mc` ; adresses `0x11b80`, `0xf77c`, `0xe008`, `0xe10c`).
+
+Trame Ethernet (complétée à 60 octets) :
+
+| Offset | Taille | Contenu |
+|---|---|---|
+| 0 | 6 | MAC de la puce (MAC du Deco + 5) |
+| 6 | 6 | MAC source (interface d'envoi) |
+| 12 | 2 | ethertype `0x8912` |
+| 14 | 1 | version `0x02` |
+| 15 | 2 | type de message, **little-endian sur le fil** (ex. `8C A0` = `0xA08C`) |
+| 17 | 2 | `00 00` |
+| 19 | 3 | OUI `00 1F 84` |
+| 22 | 1 | numéro de séquence |
+| 23 | n | charge utile |
+
+La réponse a le même format : type + 1 (`0xA08C` → `0xA08D`), même OUI. Envoyer sur `eth0.1` (VLAN 1, taggé).
+
+| Message | Type (octets sur le fil) | Charge utile | Réponse | Vérifié |
+|---|---|---|---|---|
+| Pushbutton start | `0xA08C` (`8C A0`) | `00` | `0xA08D`, charge `00` | oui, réponse reçue ; effet sur l'appairage non vérifié (pas de partenaire) |
+| Lire la NMK | `0xA05C` (`5C A0`) | `24 00` (paramètre 36) | `0xA05D` : `01` (statut), `10 00` (longueur 16), puis 16 octets de NMK | oui |
+| Écrire la NMK | `0xA018` (`18 A0`) | 16 octets de NMK + `00 00` | `0xA019` : `00` | oui |
+
+Remarques :
+- Après une écriture, la puce met **plus de 3 s** à répondre. Attendre ~5 s avant de relire, sinon les réponses se décalent.
+- La NMK écrite **survit à un redémarrage du Deco** (testé : écriture, `reboot`, relecture). Non testé : coupure de courant complète.
+- `hpSetBCMNmk` a un paramètre qui déclenche ensuite un second message (type `0xA060`, charge qui commence par `04` + constante `01 02 …`). Non décodé et non nécessaire : l'écriture seule suffit.
+- Autres messages vus dans le code mais **non testés** : `hpGetNwInfoFromBCM`, `hpSetBCMMac`, `hpBCMGetEthSts`, `hpResetBCMFacDef` (remise à zéro d'usine, à éviter), `hpRebootBCMDev`.
+
+### Appairer deux Deco : utiliser la même NMK
+
+Il n'y a pas d'appairage manuel sur le Deco. Le stock fixe la NMK à partir d'un nom de réseau (valeur par défaut `decoP93pack` remplacée par une valeur aléatoire à chaque démarrage). Sous OpenWrt, on fixe la **même NMK de 16 octets** sur les deux puces ; pas de bouton nécessaire.
+
+La NMK de ce réseau est dans `deco-p9/plc-nmk.txt` (hors dépôt, ne pas la publier). Son écriture sur le premier Deco a été vérifiée par relecture. **Non vérifié** : que deux puces avec la même NMK dialoguent réellement (il manque le second Deco sous OpenWrt).
+
+Python ne tient pas sur la flash du Deco (14,7 Mo pour 5,8 Mo libres). On l'installe dans la RAM (perdu au redémarrage, sans importance puisque la NMK persiste) :
 ```sh
-uci del_list network.@switch_vlan[0].ports='2'
-uci commit network && /etc/init.d/network restart
+apk update
+mkdir -p /tmp/py /tmp/dl && cd /tmp/dl
+apk fetch python3-light python3-base libpython3-3.14 libatomic1
+apk extract --allow-untrusted --destination /tmp/py /tmp/dl/*.apk
+export LD_LIBRARY_PATH=/tmp/py/usr/lib:/tmp/py/lib PYTHONHOME=/tmp/py/usr
 ```
-LuCI permet aussi de le faire : Réseau > Commutateur.
+Puis le script `tools/mme.py` (copié sur le Deco, par exemple `ssh root@<ip> 'cat > /tmp/mme.py' < tools/mme.py`) :
+```sh
+python3 /tmp/mme.py get-nmk
+python3 /tmp/mme.py set-nmk <32 caractères hexadécimaux>   # écrit, attend 8 s, relit et compare
+python3 /tmp/mme.py pushbutton
+```
+Par défaut il écrit sur `eth0.1` et vise le MAC du Deco + 5 (options `-i` et `-d`). Testé le 28/10/2026 : `get-nmk` et `set-nmk` sur le premier Deco.
 
 **Non vérifié** :
-- Le numéro de port (2 ou 4). Test sans risque : brancher un câble sur chaque port et lire `swconfig dev switch0 show`.
-- Si la puce CPL a besoin d'autre chose (GPIO de reset, alimentation, firmware propre). Le fork ne gère rien d'autre que le port.
-- Ta puce CPL est défectueuse, donc je n'ai pas fait du CPL actif la valeur par défaut.
+- Qu'une NMK commune suffise à faire dialoguer deux puces.
+- Le fonctionnement du CPL en bout en bout (adaptateur appairé qui voit le Deco sur le secteur).
+- La persistance de la NMK après coupure de courant complète.
+- Le fabricant exact de la puce (déduit, pas lu).
 
 ## Construire
 
@@ -241,7 +303,7 @@ Après ce changement : `relay_bridge` a obtenu une adresse, et les appareils con
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).
 - Confirmé : le firmware d'origine 1.3.0 refuse l'image factory sans erreur visible (voir journal). La méthode TFTP contourne ce blocage.
-- Le numéro de port du CPL, et le fonctionnement du CPL.
+- Le fonctionnement du CPL de bout en bout (le port 2 et le protocole Broadcom sont vérifiés, voir la section CPL ; l'appairage entre deux Deco ne l'est pas).
 - Les LED : seule la LED d'alimentation et la LED 5 GHz du M4R sont définies. La LED rouge 2,4 GHz (GPIO 1) n'est pas reprise.
 - Le sysupgrade depuis une installation faite avec le fork sans `-F`.
 - Le Wi-Fi 2,4 GHz et 5 GHz avec ath10k-ct sur le QCA9886.
