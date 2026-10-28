@@ -1,0 +1,321 @@
+From 55f4b6a43564c478fea26abcbeaac63cbd268384 Mon Sep 17 00:00:00 2001
+From: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
+Date: Thu, 29 Oct 2026 00:04:37 +0100
+Subject: [PATCH] ath79: add a powerline key service and port 2 for TP-Link
+ Deco P9
+
+The Deco P9 powerline chip is a Broadcom part behind switch port 2. It
+speaks a vendor protocol over raw Ethernet frames (ethertype 0x8912, OUI
+00:1F:84), not the Qualcomm one used by open-plc-utils.
+
+Add the plc-bcm package: a ucode tool and a procd service that write the
+network membership key from /etc/config/plc to the chip at boot, only when
+it differs. The default key is the standard HomePlug AV one, so two new
+devices see each other out of the box; it should be changed.
+
+Put port 2 in the LAN by default for this board, and install plc-bcm in the
+default image. The protocol was decoded from the stock firmware and tested
+on a Deco P9; the image itself has not been built or booted.
+
+Signed-off-by: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
+---
+ package/utils/plc-bcm/Makefile                |  46 ++++++
+ package/utils/plc-bcm/files/plc-nmk.uc        | 151 ++++++++++++++++++
+ package/utils/plc-bcm/files/plc.config        |   8 +
+ package/utils/plc-bcm/files/plc.init          |  22 +++
+ .../generic/base-files/etc/board.d/02_network |   6 +-
+ target/linux/ath79/image/generic-tp-link.mk   |   2 +-
+ 6 files changed, 233 insertions(+), 2 deletions(-)
+ create mode 100644 package/utils/plc-bcm/Makefile
+ create mode 100755 package/utils/plc-bcm/files/plc-nmk.uc
+ create mode 100644 package/utils/plc-bcm/files/plc.config
+ create mode 100755 package/utils/plc-bcm/files/plc.init
+
+diff --git a/package/utils/plc-bcm/Makefile b/package/utils/plc-bcm/Makefile
+new file mode 100644
+index 0000000..e1a14d0
+--- /dev/null
++++ b/package/utils/plc-bcm/Makefile
+@@ -0,0 +1,46 @@
++#
++# Copyright (C) 2026 Thomas Dannenmuller
++#
++# This is free software, licensed under the GNU General Public License v2.
++# See /LICENSE for more information.
++#
++
++include $(TOPDIR)/rules.mk
++
++PKG_NAME:=plc-bcm
++PKG_RELEASE:=1
++
++PKG_MAINTAINER:=Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
++PKG_LICENSE:=GPL-2.0-or-later
++
++include $(INCLUDE_DIR)/package.mk
++
++define Package/plc-bcm
++  SECTION:=utils
++  CATEGORY:=Utilities
++  TITLE:=Powerline (Broadcom) network key service
++  DEPENDS:=+ucode +ucode-mod-fs +ucode-mod-socket +ucode-mod-uci
++  PKGARCH:=all
++endef
++
++define Package/plc-bcm/description
++ Writes the powerline network membership key (NMK) from /etc/config/plc to
++ the Broadcom powerline chip found on the TP-Link Deco P9, at boot. The chip
++ is reached through a switch port with raw Ethernet frames (ethertype 0x8912).
++endef
++
++define Package/plc-bcm/conffiles
++/etc/config/plc
++endef
++
++define Build/Compile
++endef
++
++define Package/plc-bcm/install
++	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d $(1)/etc/config
++	$(INSTALL_BIN) ./files/plc-nmk.uc $(1)/usr/sbin/plc-nmk
++	$(INSTALL_BIN) ./files/plc.init $(1)/etc/init.d/plc
++	$(INSTALL_CONF) ./files/plc.config $(1)/etc/config/plc
++endef
++
++$(eval $(call BuildPackage,plc-bcm))
+diff --git a/package/utils/plc-bcm/files/plc-nmk.uc b/package/utils/plc-bcm/files/plc-nmk.uc
+new file mode 100755
+index 0000000..ee62ed8
+--- /dev/null
++++ b/package/utils/plc-bcm/files/plc-nmk.uc
+@@ -0,0 +1,151 @@
++#!/usr/bin/ucode
++// Parle à la puce CPL Broadcom du TP-Link Deco P9 (ethertype 0x8912).
++//   plc.uc get-nmk | set-nmk <32 hex> | pushbutton | sync
++// sync : lit /etc/config/plc (enabled, nmk) et écrit la NMK sur la puce si elle diffère.
++import * as socket from "socket";
++import * as fs from "fs";
++import { cursor } from "uci";
++
++const TX_IF = "eth0.1";
++const RX_IF = "eth0";
++const SET_NMK_DELAY = 8;
++
++function mac_of(ifname) {
++	return lc(trim(fs.readfile("/sys/class/net/" + ifname + "/address")));
++}
++function colon(h) {
++	let o = [];
++	for (let i = 0; i < 12; i += 2)
++		push(o, substr(h, i, 2));
++	return join(":", o);
++}
++// MAC de la puce = MAC du Deco + 5 (règle du firmware d'origine)
++function plc_mac(m) {
++	let b = map(split(m, ":"), (x) => hex(x));
++	let carry = 5;
++	for (let i = 5; i >= 0 && carry; i--) {
++		let s = b[i] + carry;
++		b[i] = s & 0xff;
++		carry = s >> 8;
++	}
++	return join("", map(b, (x) => sprintf("%02x", x)));
++}
++
++let src_mac = mac_of(TX_IF);
++let src = replace(src_mac, ":", "");
++let own = [ src, replace(mac_of(RX_IF), ":", "") ];
++let dst = plc_mac(mac_of(RX_IF));
++let seq = time() & 0xff;
++
++let tx = socket.create(socket.AF_PACKET, socket.SOCK_RAW, 0x8912);
++if (!tx || !tx.bind({ family: socket.AF_PACKET, protocol: 0x8912, interface: TX_IF, address: src_mac })) {
++	warn("socket d'envoi: ", socket.error(), "\n");
++	exit(1);
++}
++let rx = socket.create(socket.AF_PACKET, socket.SOCK_RAW, 0x0003);
++if (!rx || !rx.bind({ family: socket.AF_PACKET, protocol: 0x0003, interface: RX_IF, address: "00:00:00:00:00:00" })) {
++	warn("socket de réception: ", socket.error(), "\n");
++	exit(1);
++}
++
++// Renvoie la charge utile (en hexadécimal) de la réponse, ou null.
++function mme(mmtype, payload) {
++	seq = (seq + 1) & 0xff;
++	let frame = dst + src + "8912" + "02" + mmtype + "0000" + "001f84" + sprintf("%02x", seq) + payload;
++	while (length(frame) < 120)
++		frame += "00";
++	tx.send(hexdec(frame));
++	let end = time() + 4;
++	while (time() < end) {
++		let p = socket.poll(200, [ rx, socket.POLLIN ]);
++		if (!length(p) || !p[0][1])
++			continue;
++		let d = hexenc(rx.recv(2048));
++		let off = (substr(d, 24, 4) == "8100") ? 8 : 0;
++		if (substr(d, 24 + off, 4) != "8912" || (substr(d, 12, 12) in own))
++			continue;
++		return substr(d, 28 + off + 18);	// après version(1) type(2) 0000 OUI(3) seq(1)
++	}
++	return null;
++}
++
++function get_nmk() {
++	let r = mme("5ca0", "2400");
++	// r : statut(1) longueur(2, LE) NMK(16)
++	if (!r || substr(r, 0, 2) != "01" || substr(r, 2, 4) != "1000")
++		return null;
++	return substr(r, 6, 32);
++}
++
++let cmd = ARGV[0];
++if (cmd == "get-nmk") {
++	let n = get_nmk();
++	if (!n) {
++		warn("pas de réponse (après une écriture, attendre 5 s)\n");
++		exit(1);
++	}
++	print(n, "\n");
++} else if (cmd == "set-nmk") {
++	let n = lc(ARGV[1] ?? "");
++	if (!match(n, /^[0-9a-f]{32}$/)) {
++		warn("set-nmk attend 32 caractères hexadécimaux\n");
++		exit(1);
++	}
++	if (mme("18a0", n + "0000") == null) {
++		warn("pas de réponse à l'écriture\n");
++		exit(1);
++	}
++	sleep(SET_NMK_DELAY * 1000);
++	let back = get_nmk();
++	if (back != n) {
++		warn("relecture différente : ", back ?? "aucune réponse", "\n");
++		exit(1);
++	}
++	print("NMK écrite et relue : ", back, "\n");
++} else if (cmd == "pushbutton") {
++	let r = mme("8ca0", "00");
++	print("réponse : ", r ?? "aucune", "\n");
++} else if (cmd == "sync") {
++	function log(msg) {
++		system([ "/usr/bin/logger", "-t", "plc", msg ]);
++		print(msg, "\n");
++	}
++	let uci = cursor();
++	let want = lc(uci.get("plc", "main", "nmk") ?? "");
++	if (uci.get("plc", "main", "enabled") != "1") {
++		log("désactivé (plc.main.enabled != 1)");
++		exit(0);
++	}
++	if (!match(want, /^[0-9a-f]{32}$/)) {
++		log("plc.main.nmk absente ou invalide : 32 caractères hexadécimaux attendus");
++		exit(1);
++	}
++	// La puce peut mettre du temps à répondre après le démarrage.
++	let cur = null;
++	for (let i = 0; i < 24 && !cur; i++) {
++		cur = get_nmk();
++		if (!cur)
++			sleep(5000);
++	}
++	if (!cur) {
++		log("la puce CPL ne répond pas, NMK inchangée");
++		exit(1);
++	}
++	if (cur == want) {
++		log("NMK déjà à jour");
++		exit(0);
++	}
++	if (mme("18a0", want + "0000") == null) {
++		log("pas de réponse à l'écriture de la NMK");
++		exit(1);
++	}
++	sleep(SET_NMK_DELAY * 1000);
++	if (get_nmk() != want) {
++		log("la NMK relue ne correspond pas à celle écrite");
++		exit(1);
++	}
++	log("NMK écrite et relue");
++} else {
++	warn("usage : plc.uc get-nmk | set-nmk <32 hex> | pushbutton | sync\n");
++	exit(1);
++}
+diff --git a/package/utils/plc-bcm/files/plc.config b/package/utils/plc-bcm/files/plc.config
+new file mode 100644
+index 0000000..49b03aa
+--- /dev/null
++++ b/package/utils/plc-bcm/files/plc.config
+@@ -0,0 +1,8 @@
++config plc 'main'
++	option enabled '1'
++	# NMK du réseau CPL : 32 caractères hexadécimaux, identique sur tous les appareils.
++	# Valeur par défaut = NMK standard HomePlug AV (mot de passe "HomePlugAV"), celle de
++	# tous les adaptateurs CPL neufs : deux appareils neufs se voient sans réglage, mais
++	# n'importe quel appareil CPL branché sur le même circuit électrique peut rejoindre
++	# le réseau. Changer cette valeur sur chaque appareil (uci set plc.main.nmk=...).
++	option nmk '50d3e4933f855b7040784df815aa8db7'
+diff --git a/package/utils/plc-bcm/files/plc.init b/package/utils/plc-bcm/files/plc.init
+new file mode 100755
+index 0000000..2ee863f
+--- /dev/null
++++ b/package/utils/plc-bcm/files/plc.init
+@@ -0,0 +1,22 @@
++#!/bin/sh /etc/rc.common
++# Écrit la NMK de /etc/config/plc sur la puce CPL Broadcom du Deco P9.
++
++START=99
++USE_PROCD=1
++
++start_service() {
++	procd_open_instance
++	procd_set_param command /bin/sh -c '
++		for i in $(seq 1 30); do
++			[ -d /sys/class/net/eth0.1 ] && break
++			sleep 2
++		done
++		exec /usr/sbin/plc-nmk sync'
++	procd_set_param stdout 1
++	procd_set_param stderr 1
++	procd_close_instance
++}
++
++service_triggers() {
++	procd_add_reload_trigger plc
++}
+diff --git a/target/linux/ath79/generic/base-files/etc/board.d/02_network b/target/linux/ath79/generic/base-files/etc/board.d/02_network
+index f67aac8..9707369 100644
+--- a/target/linux/ath79/generic/base-files/etc/board.d/02_network
++++ b/target/linux/ath79/generic/base-files/etc/board.d/02_network
+@@ -531,11 +531,15 @@ ath79_setup_interfaces()
+ 			"0u@eth1" "3:lan:3" "4:lan:2" "5:lan:1" "6u@eth0" "2:wan:4" "1:wan:5"
+ 		;;
+ 	tplink,deco-m4r-v1|\
+-	tplink,deco-p9-v1v2|\
+ 	tplink,deco-s4-v2)
+ 		ucidef_add_switch "switch0" \
+ 			"0@eth0" "3:lan:1" "5:lan:2"
+ 		;;
++	tplink,deco-p9-v1v2)
++		# port 2 : puce CPL (voir package plc-bcm)
++		ucidef_add_switch "switch0" \
++			"0@eth0" "3:lan:1" "5:lan:2" "2:lan:3"
++		;;
+ 	tplink,eap225-wall-v2)
+ 		ucidef_add_switch "switch0" \
+ 			"0@eth0" "1:lan" "2:lan" "3:lan" "4:lan"
+diff --git a/target/linux/ath79/image/generic-tp-link.mk b/target/linux/ath79/image/generic-tp-link.mk
+index 530b41c..8651642 100644
+--- a/target/linux/ath79/image/generic-tp-link.mk
++++ b/target/linux/ath79/image/generic-tp-link.mk
+@@ -531,7 +531,7 @@ define Device/tplink_deco-p9-v1v2
+   IMAGE_SIZE := 13824k
+   DEVICE_MODEL := Deco P9
+   DEVICE_VARIANT := v1v2
+-  DEVICE_PACKAGES := kmod-ath10k-ct ath10k-firmware-qca9888-ct
++  DEVICE_PACKAGES := kmod-ath10k-ct ath10k-firmware-qca9888-ct plc-bcm
+   SUPPORTED_DEVICES += deco-p9-v1v2
+   TPLINK_BOARD_ID := DECO-P9-V1V2
+ endef
+-- 
+2.54.0 (Apple Git-157)
+

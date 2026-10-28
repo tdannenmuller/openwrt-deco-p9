@@ -1,4 +1,4 @@
-# Support OpenWrt pour le TP-Link Deco P9 (sans CPL par défaut)
+# Support OpenWrt pour le TP-Link Deco P9
 
 Branche : `deco-p9`, basée sur OpenWrt `main` au commit `6b7ea6896a`.
 Deux patchs dans `patches/`. Rien n'a été flashé, aucun appareil touché.
@@ -65,7 +65,7 @@ Choix de réutilisation :
 
 ## Ce qui est écarté, et pourquoi
 
-- **Port switch du CPL (groupe b)** : écarté du réglage par défaut. Voir « CPL » plus bas (port 2 vérifié, procédure d'activation corrigée).
+- **Port switch du CPL (groupe b)** : écarté des patchs 0001 et 0002 (les images de `images/` n'ont pas le CPL). Le patch 0003 le met dans le LAN par défaut et ajoute le paquet `plc-bcm`. Voir « CPL » plus bas.
 - **FastPath / shortcut-fe (groupe c)** : écarté. Code lié au noyau 5.4, non maintenu, absent de main, source de bugs. Le fork lui-même l'a supprimé dans « move Deco-P9 to master ».
 - **LED `red:wlan2g` sur le GPIO 1** : écartée. Elle est dans le dts du fork mais absente du M4R de main. Je ne peux pas confirmer le GPIO.
 - **Modifs de `config-5.4` / `config-5.10`** : écartées, bruit de rebase du fork, sans lien avec l'appareil.
@@ -130,6 +130,23 @@ Remarques :
 - La NMK écrite **survit à un redémarrage du Deco** (testé : écriture, `reboot`, relecture). Non testé : coupure de courant complète.
 - `hpSetBCMNmk` a un paramètre qui déclenche ensuite un second message (type `0xA060`, charge qui commence par `04` + constante `01 02 …`). Non décodé et non nécessaire : l'écriture seule suffit.
 - Autres messages vus dans le code mais **non testés** : `hpGetNwInfoFromBCM`, `hpSetBCMMac`, `hpBCMGetEthSts`, `hpResetBCMFacDef` (remise à zéro d'usine, à éviter), `hpRebootBCMDev`.
+
+### Paquet OpenWrt `plc-bcm` et patch 0003 (firmware « prêt à l'emploi »)
+
+Le patch `patches/0003-…` (à appliquer avec `git am`, `build.sh` le fait déjà) ajoute :
+- le paquet `package/utils/plc-bcm` : `/usr/sbin/plc-nmk` (l'outil `ucode`, identique à `tools/plc.uc`), le service `/etc/init.d/plc` (démarrage en arrière-plan) et `/etc/config/plc` (conservé au `sysupgrade`, car dans `CONFFILES`). Dépendances : `ucode`, `ucode-mod-fs`, `ucode-mod-socket`, `ucode-mod-uci` (chaque module `ucode` est un paquet séparé : `uci` n'est pas garanti sans `luci`) ;
+- `plc-bcm` dans `DEVICE_PACKAGES` du Deco P9 : il est donc dans l'image sans modifier `.config` ;
+- le port 2 dans le LAN par défaut pour cette carte (`02_network`, nouvelle entrée `tplink,deco-p9-v1v2` séparée de M4R et S4).
+
+**NMK par défaut** : `/etc/config/plc` est livré avec `enabled '1'` et la NMK standard HomePlug AV (`50d3e4933f855b7040784df815aa8db7`, mot de passe « HomePlugAV », vérifiée avec `hpavkey -M HomePlugAV`), celle de tous les adaptateurs CPL neufs. Deux Deco neufs se voient donc sans réglage. **Conséquence de sécurité** : cette clé est publique, tout appareil CPL branché sur le même circuit électrique peut rejoindre le réseau, donc le LAN. À changer sur chaque Deco dès l'installation :
+```sh
+uci set plc.main.nmk='<32 caractères hexadécimaux>'; uci commit plc; /etc/init.d/plc restart
+```
+Pour désactiver le CPL : `uci set plc.main.enabled='0'` (le port 2 reste dans le LAN, sans effet sans puce active).
+
+**Vérifié** : les trois patchs s'appliquent sans conflit (`git am`) sur la base `6b7ea6896a` et donnent l'arbre attendu ; les fichiers du paquet sont ceux testés sur les Deco (lecture, écriture, démarrage avec correction de la NMK).
+
+**NON vérifié : le paquet et l'image n'ont pas été construits.** Le `Makefile` de `plc-bcm` suit celui d'un paquet existant sans compilation (`gre`), mais n'a pas été exécuté (pas de machine Linux disponible pendant ce travail ; macOS n'est pas supporté par OpenWrt). Restent à faire, sur une machine de build : construire l'image, la flasher, et vérifier que `/etc/config/plc`, `/etc/init.d/plc` (activé au démarrage, lien `S99plc`) et `/usr/sbin/plc-nmk` sont présents, que le service journalise `plc: NMK écrite et relue` (ou « déjà à jour »), que le port 2 est dans le VLAN 1 sans intervention, et que deux Deco neufs se joignent par le CPL. Pas testé non plus : une image sans `luci`, le comportement quand la puce ne répond pas dans les 2 minutes d'attente, et une puce dont le MAC n'est pas « MAC du Deco + 5 » (le stock le corrigeait ; ce service ne le fait pas).
 
 ### Appairer deux Deco : utiliser la même NMK
 
