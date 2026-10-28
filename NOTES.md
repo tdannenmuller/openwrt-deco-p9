@@ -325,6 +325,52 @@ Précautions pour la suite :
 - Un script avec `set -e` s'est arrêté en cours de route à cause d'un `uci -q delete` d'une option absente (code de retour 1) : ne pas combiner `set -e` et `uci delete`.
 - L'accès SSH par une nouvelle adresse IP demande d'accepter la clé de l'hôte (`ssh -o StrictHostKeyChecking=accept-new`) ; un script en `BatchMode` échoue sinon.
 
+## Débits mesurés avec deux Deco en relais + bridge (28/10/2026)
+
+Montage : Livebox, puis Deco 1 en relais Wi-Fi (`relayd`, 5 GHz canal 112, signal −45 dBm, 650 Mbit/s négocié), puis le CPL, puis Deco 2 en bridge. Les deux Deco sont sur la même multiprise (avec une ampoule LED et un chargeur de MacBook).
+
+| Chemin | Débit (Mbit/s, envoi / réception) |
+|---|---|
+| iPhone sur le Wi-Fi de la Livebox | ~270 / ~270 |
+| iPhone sur le Wi-Fi du Deco 1 | 123 / 89 |
+| iPhone sur le Wi-Fi du Deco 2 | ~40 / ~40 |
+| iperf3 Deco 1 vers un Mac derrière la Livebox (Wi-Fi client seul) | 208 / 196 |
+| iperf3 CPL seul, Deco 2 vers Deco 1 | 174 (92 retransmissions) / 200 (26) |
+| iperf3 Deco 2 vers le même Mac (CPL + `relayd` + Wi-Fi client du Deco 1) | 79 (71 retransmissions) / 141 (206) |
+
+Mesures de l'iPhone : speed test, à des endroits proches mais pas identiques. Mesures iperf3 : 8 à 10 s, TCP, un seul flux, `iperf3` installé en RAM (`apk fetch --recursive iperf3` puis `apk extract --destination /tmp/ip`).
+
+Constats :
+- Le CPL n'est pas le goulot : 174 à 200 Mbit/s entre les deux Deco malgré l'ampoule LED et le chargeur.
+- Le Wi-Fi du Deco 1 vers la Livebox est bon (208 / 196).
+- Le trajet complet du Deco 2 (CPL, `relayd`, Wi-Fi) tombe à 79 Mbit/s en envoi alors que chaque tronçon fait 175 à 210. Pendant un transfert CPL d'environ 200 Mbit/s, le processeur du Deco 1 est à 0 % d'inactivité (84 % de softirq) : le Deco 1 est le suspect principal. `relayd` lui-même n'a pas été profilé.
+- Sur le Deco 1, le Wi-Fi client et le point d'accès partagent la même radio 5 GHz (canal 112) : le trafic de ses clients passe deux fois par cette radio, ce qui explique en grande partie 123 / 89.
+- Le Deco 2 perd encore environ la moitié (de 79 à 141 mesurés derrière lui à environ 40 avec l'iPhone) : cause non isolée (processeur du Deco 2, iPhone, retransmissions).
+- Amélioration non testée : relier le Deco 1 à la Livebox par Ethernet ou CPL pour supprimer `relayd` (voir le journal ci-dessus).
+
+## Roaming Wi-Fi entre les deux Deco (28/10/2026)
+
+Les deux Deco diffusent le même SSID (`Trauma_EXT`, même clé) sur chaque bande. Pour que les clients passent de l'un à l'autre plus vite, 802.11k et 802.11r (Fast BSS Transition) sont activés sur les interfaces point d'accès des deux Deco, sur les deux radios (`wireless.default_radio0` et `default_radio1`) :
+
+```sh
+uci set wireless.default_radio0.ieee80211k='1'
+uci set wireless.default_radio0.ieee80211r='1'
+uci set wireless.default_radio0.mobility_domain='4f57'     # identique sur les deux Deco
+uci set wireless.default_radio0.ft_over_ds='0'
+uci set wireless.default_radio0.ft_psk_generate_local='1'  # pas de r0kh/r1kh à configurer
+uci set wireless.default_radio0.nasid='deco1-radio0'       # unique par radio et par Deco
+uci commit wireless && wifi reload
+```
+(même chose sur `default_radio1`, et `deco2-radioN` sur le second Deco.) Sauvegarde de l'ancien fichier sur chaque Deco : `/root/wireless.avant-roaming`.
+
+Vérifié dans la configuration hostapd générée des deux Deco : `wpa_key_mgmt=WPA-PSK FT-PSK`, `mobility_domain=4f57`, `ft_psk_generate_local=1`, `rrm_neighbor_report=1`, et le Wi-Fi des deux Deco `ENABLED` après le rechargement. Canaux différents pour éviter les interférences : Deco 1 en 5 GHz canal 112 et 2,4 GHz canal 1, Deco 2 en 5 GHz canal 36 et 2,4 GHz canal 11. Le SSID du second Deco avait été renommé `Trauma_EXT_D2` pour des tests de débit, puis remis à `Trauma_EXT`.
+
+Limites :
+- **802.11v n'est pas disponible** : `wpad-basic-mbedtls` (hostapd 2.12) rejette l'option `bss_transition` (`unknown configuration item`). Hostapd a alors refusé toute la configuration et le Wi-Fi du second Deco est resté éteint environ une minute, jusqu'à la suppression de l'option. Il n'y a donc pas de demande de changement de point d'accès envoyée aux clients (BSS Transition). Le paquet `wpad` complet pourrait le permettre : non essayé.
+- **Pas de partage de voisinage** entre les deux Deco (pas de `usteer` ni de `dawn`) : chaque Deco n'annonce que lui-même dans ses rapports 802.11k. Le client décide seul quand changer.
+- **Non testé avec un vrai client** : je n'ai pas mesuré un passage d'un Deco à l'autre (ni la durée de coupure). Certains vieux appareils peuvent refuser de se connecter à un SSID en `FT-PSK` ; si cela arrive, retirer `ieee80211r` sur les deux Deco.
+- `network restart` n'est pas utilisé : seul `wifi reload` a été lancé (voir « Incident »). Sur le Deco 1, `wifi reload` coupe quelques secondes son Wi-Fi client vers la Livebox, et donc l'accès SSH par ce chemin.
+
 ## Liste de ce qui n'est PAS vérifié
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).
@@ -337,3 +383,4 @@ Précautions pour la suite :
 - Le sysupgrade via l'interface web du firmware d'origine (contourné par la méthode TFTP, jamais testé directement).
 - La stabilité du pont relayd dans la durée, et le roaming entre la Livebox et le Deco.
 - La cause du figement d'un Deco au `network restart` par SSH, et le Wi-Fi du second Deco en bridge (voir « Second Deco en bridge simple »).
+- Le roaming 802.11k/r entre les deux Deco avec un vrai client (durée de coupure, appareils incompatibles FT-PSK), et 802.11v (indisponible avec `wpad-basic`).
