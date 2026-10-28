@@ -137,7 +137,7 @@ Il n'y a pas d'appairage manuel sur le Deco. Le stock fixe la NMK à partir d'un
 
 La NMK de ce réseau est dans `deco-p9/plc-nmk.txt` (hors dépôt, ne pas la publier). Son écriture sur le premier Deco a été vérifiée par relecture. **Vérifié le 28/10/2026 avec deux Deco P9 sous OpenWrt** : après avoir écrit la même NMK sur les deux puces (`set-nmk`), le second Deco (192.168.1.1, sans accès Internet) a répondu au ping du premier et de la Livebox, et le switch du second a appris le MAC du premier **sur son port 2** (CPL). Les deux NMK d'origine étaient différentes, donc le lien vient bien de la NMK commune. Mesures : environ 3 ms vers le premier Deco, 7 à 10 ms vers la Livebox (3 essais, 0 % de perte). Débit et stabilité non mesurés.
 
-Python ne tient pas sur la flash du Deco (14,7 Mo pour 5,8 Mo libres). On l'installe dans la RAM (perdu au redémarrage, sans importance puisque la NMK persiste) :
+Python ne tient pas sur la flash du Deco (14,7 Mo pour 5,8 Mo libres) : préférer `tools/plc.uc` (voir plus bas). Pour utiliser `mme.py`, on installe Python dans la RAM (perdu au redémarrage, sans importance puisque la NMK persiste) :
 ```sh
 apk update
 mkdir -p /tmp/py /tmp/dl && cd /tmp/dl
@@ -152,6 +152,32 @@ python3 /tmp/mme.py set-nmk <32 caractères hexadécimaux>   # écrit, attend 8 
 python3 /tmp/mme.py pushbutton
 ```
 Par défaut il écrit sur `eth0.1` et vise le MAC du Deco + 5 (options `-i` et `-d`). Testé le 28/10/2026 : `get-nmk` et `set-nmk` sur le premier Deco.
+
+**Sans Python : `tools/plc.uc`** (même protocole, en `ucode`, déjà présent dans l'image de base). Il ne manque que `ucode-mod-socket` (24 Ko, contre 14,7 Mo pour Python), qui tient dans la flash du Deco :
+```sh
+apk add ucode-mod-socket          # Deco avec accès Internet ; sinon, extraire dans /tmp (voir ci-dessus)
+ucode /tmp/plc.uc get-nmk
+ucode /tmp/plc.uc set-nmk <32 caractères hexadécimaux>
+ucode /tmp/plc.uc pushbutton
+```
+Testé le 28/10/2026 : `get-nmk` sur les deux Deco, `set-nmk` (même valeur, avec relecture) sur le premier. `pushbutton` non relancé depuis cette version. Particularités de l'API `ucode` : le socket doit être lié par `interface` (nom) avec une adresse MAC valide, pas par `ifindex` ; et un filtre `0x8912` ne livre aucune trame (cause non élucidée), donc le script reçoit tout (`ETH_P_ALL`) sur `eth0` et filtre lui-même.
+
+**Service de démarrage** (`tools/plc-service/` + `tools/plc.uc`) : à chaque démarrage, il lit `/etc/config/plc` et, si la NMK de la puce est différente, l'écrit puis la relit. Il tourne en arrière-plan (procd) sans bloquer le démarrage, attend l'interface `eth0.1` (jusqu'à 60 s) puis la réponse de la puce (jusqu'à 2 min), et journalise sous l'étiquette `plc` (`logread | grep plc:`).
+
+Installation (Deco avec accès Internet pour `apk`) :
+```sh
+apk add ucode-mod-socket
+cp tools/plc.uc /usr/sbin/plc-nmk && chmod +x /usr/sbin/plc-nmk
+cp tools/plc-service/etc/init.d/plc /etc/init.d/plc && chmod +x /etc/init.d/plc
+cp tools/plc-service/etc/config/plc /etc/config/plc
+uci set plc.main.nmk='<32 caractères hexadécimaux>'; uci set plc.main.enabled='1'; uci commit plc
+/etc/init.d/plc enable && /etc/init.d/plc start
+```
+La NMK reste sur le Deco (dans `/etc/config/plc`), jamais dans l'image ni dans le dépôt. Le fichier fourni a `enabled '0'` et une NMK vide : sans configuration, le service ne fait rien.
+
+Testé le 28/10/2026 sur le premier Deco : (1) service désactivé : ne fait rien ; (2) NMK déjà à jour : rien n'est écrit ; (3) NMK différente : écrite et relue, puis restaurée de la même façon ; (4) démarrage : avec une mauvaise NMK volontairement écrite sur la puce puis un `reboot`, le service l'a corrigée tout seul (journal `NMK écrite et relue`) et le second Deco est redevenu joignable par le CPL.
+
+**Non fait / non testé** : installation sur le second Deco (sans accès Internet, il faudrait y copier `ucode-mod-socket`) ; un vrai paquet OpenWrt (aucun `Makefile` : les fichiers se copient à la main, rien n'est ajouté à l'image) ; démarrage à froid après coupure de courant ; image fraîche jamais passée par le firmware d'origine. Le service n'écrit la NMK que si la puce répond ; si elle ne répond jamais, il abandonne après 2 minutes et ne réessaie pas avant le prochain démarrage ou `service plc restart`.
 
 **Non vérifié** :
 - La persistance de la NMK après coupure de courant complète.

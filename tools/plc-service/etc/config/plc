@@ -1,0 +1,5 @@
+config plc 'main'
+	option enabled '0'
+	# NMK du réseau CPL : 32 caractères hexadécimaux, identique sur tous les Deco.
+	# Ne pas la publier ni la mettre dans l'image.
+	option nmk ''
