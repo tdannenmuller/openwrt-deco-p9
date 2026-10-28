@@ -135,7 +135,7 @@ Remarques :
 
 Il n'y a pas d'appairage manuel sur le Deco. Le stock fixe la NMK à partir d'un nom de réseau (valeur par défaut `decoP93pack` remplacée par une valeur aléatoire à chaque démarrage). Sous OpenWrt, on fixe la **même NMK de 16 octets** sur les deux puces ; pas de bouton nécessaire.
 
-La NMK de ce réseau est dans `deco-p9/plc-nmk.txt` (hors dépôt, ne pas la publier). Son écriture sur le premier Deco a été vérifiée par relecture. **Non vérifié** : que deux puces avec la même NMK dialoguent réellement (il manque le second Deco sous OpenWrt).
+La NMK de ce réseau est dans `deco-p9/plc-nmk.txt` (hors dépôt, ne pas la publier). Son écriture sur le premier Deco a été vérifiée par relecture. **Vérifié le 28/10/2026 avec deux Deco P9 sous OpenWrt** : après avoir écrit la même NMK sur les deux puces (`set-nmk`), le second Deco (192.168.1.1, sans accès Internet) a répondu au ping du premier et de la Livebox, et le switch du second a appris le MAC du premier **sur son port 2** (CPL). Les deux NMK d'origine étaient différentes, donc le lien vient bien de la NMK commune. Mesures : environ 3 ms vers le premier Deco, 7 à 10 ms vers la Livebox (3 essais, 0 % de perte). Débit et stabilité non mesurés.
 
 Python ne tient pas sur la flash du Deco (14,7 Mo pour 5,8 Mo libres). On l'installe dans la RAM (perdu au redémarrage, sans importance puisque la NMK persiste) :
 ```sh
@@ -154,9 +154,8 @@ python3 /tmp/mme.py pushbutton
 Par défaut il écrit sur `eth0.1` et vise le MAC du Deco + 5 (options `-i` et `-d`). Testé le 28/10/2026 : `get-nmk` et `set-nmk` sur le premier Deco.
 
 **Non vérifié** :
-- Qu'une NMK commune suffise à faire dialoguer deux puces.
-- Le fonctionnement du CPL en bout en bout (adaptateur appairé qui voit le Deco sur le secteur).
 - La persistance de la NMK après coupure de courant complète.
+- Le débit et la stabilité du lien CPL dans la durée.
 - Le fabricant exact de la puce (déduit, pas lu).
 
 ## Construire
