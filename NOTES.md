@@ -203,6 +203,9 @@ Testé le 28/10/2026 sur le premier Deco : (1) service désactivé : ne fait rie
 
 ## Construire
 
+Le plus simple, sur une machine Linux avec la toolchain : `./build-image.sh` (applique les **trois** patchs sur le commit `6b7ea6896a3a83c9ae80d31e8d35d911e032268f`, configure, compile, puis lance `./check-image.sh` qui vérifie le paquet `plc-bcm` et le rootfs). `CLAUDE.md` décrit la procédure pour un agent. Ces deux scripts n'ont **pas encore été exécutés**. Les scripts plus anciens ci-dessous (`build.sh`, `build-native.sh`) donnent le même résultat pour le reste.
+
+
 ```sh
 cd out && ./build.sh        # Docker (non testé)
 ./build-native.sh              # Linux direct (testé), après : apt install build-essential gawk flex bison libncurses-dev libssl-dev python3-setuptools swig rsync unzip zlib1g-dev file wget libelf-dev
