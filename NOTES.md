@@ -442,6 +442,24 @@ Pas avec une liaison Wi-Fi « client » vers la Livebox : une station Wi-Fi stan
 
 Le Mac n'a que 4,8 Go libres sur 460 Go (disque plein à 99 %, pas d'autre volume), alors qu'un build OpenWrt demande environ 30 à 40 Go. Docker et Colima n'ont donc **pas** été installés. Il faudrait libérer au moins 40 Go ou utiliser un disque externe, puis une machine virtuelle Linux (Colima/Docker) avec `build.sh`. Le build se fait pour l'instant sur une machine Linux séparée (`CLAUDE.md`).
 
+## Build avec relayd intégré (patch 0003 à jour) — 29-30/10/2026
+
+Reconstruit (`./build-image.sh`, main à `6b7ea6896a3a83c9ae80d31e8d35d911e032268f`) avec les correctifs qui suivent l'incident ci-dessus : `relayd` et `luci-proto-relay` dans le `.config`, `write_nmk()` qui retente la relecture au lieu d'échouer sur une non-réponse à l'écriture. `check-image.sh` donne `TOUT EST BON`, y compris les deux nouveaux contrôles (`/usr/sbin/relayd`, lien `S*relayd`).
+
+**Un bug du script de vérification a dû être corrigé une seconde fois.** Ma correction du 29/10 (le faux `FAIL` de `strings | grep -q` sous `pipefail`, voir plus bas) n'avait été commitée que sur une branche à moi, jamais fusionnée dans `main` : l'agent de test est reparti de l'ancien `main` et l'a réintroduite sans le savoir en ajoutant les contrôles `relayd`. Réappliquée à l'identique. **Leçon à en tirer : un correctif de `check-image.sh` doit être fusionné dans `main`, pas laissé sur une branche de build isolée, sinon il se reperd à chaque nouvelle branche de travail.**
+
+**Images dans `images/` (remplacent celles du 29/10 sans `relayd`) :**
+
+| Fichier | SHA256 |
+|---|---|
+| `openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-factory.bin` | `82f631b1daccdf60e35db48df7ca9dd41be2c2ddb2c2f0dff268911ffd01f3c1` |
+| `openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-sysupgrade.bin` | `9552842c8c2833bd33895a8e53ca1b43f2273cd7706f75cfcf18e6b575ab134f` |
+| `openwrt-ath79-generic-tplink_deco-p9-v1v2-initramfs-kernel.bin` | `8875c3ea37468d10669b87c11faadb1c73b17602ecee3149d57d7635cf64c3e2` |
+
+Sysupgrade : 7 864 608 octets, marge de 6,3 Mo sous la limite de 13 824 ko (luci, luci-ssl, plc-bcm, relayd et luci-proto-relay inclus).
+
+**Non vérifié :** rien de tout ça n'a tourné sur un vrai Deco. C'est la première image qui contient `relayd` de façon native plutôt qu'installé à la main ; l'incident ci-dessus montre que cette différence a un effet réel sur un sysupgrade, donc à surveiller particulièrement au premier flash de cette version.
+
 ## Liste de ce qui n'est PAS vérifié
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).
