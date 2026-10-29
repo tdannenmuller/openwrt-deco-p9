@@ -9,7 +9,11 @@ cd "$WORK" || { echo "dossier introuvable : $WORK"; exit 1; }
 fail=0
 ok()  { echo "  OK   $1"; }
 bad() { echo "  FAIL $1"; fail=1; }
-chk() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
+# set +o pipefail en sous-shell : évite un faux FAIL quand une commande comme
+# `strings gros_fichier | grep -q motif` est coupée par SIGPIPE au moment où
+# grep -q sort dès la première correspondance trouvée. grep a quand même trouvé
+# ce qu'il cherchait ; seul son exit code à lui doit compter ici.
+chk() { if (set +o pipefail; eval "$2") >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
 
 ROOT=$(find build_dir -maxdepth 2 -type d -name 'root-ath79' 2>/dev/null | head -1)
 IMG=bin/targets/ath79/generic
