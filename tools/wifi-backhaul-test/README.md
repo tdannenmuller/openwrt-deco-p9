@@ -1,8 +1,8 @@
 # Essai : liaison Wi-Fi « pont » entre deux Deco P9 (WDS et 802.11s), sans relayd
 
-**Statut : WDS essayé le 29/10/2026 sur le 2,4 GHz (phase 1) puis sur le 5 GHz ; maillage 802.11s (phase 2) non fait.** Voir « Résultats » en bas.
+**Statut : WDS essayé le 29/10/2026 sur le 2,4 GHz puis sur le 5 GHz ; maillage 802.11s essayé sur le 5 GHz (échec) et sur le 2,4 GHz (réussi).** Voir « Résultats » en bas.
 Les commandes `swap-mesh`, `swap-basic` et `mesh` n'ont pas été essayées. Le script modifié après la phase 1
-(règles `nft` et `ip rule` ajoutées dans `apply`/`stop`, variables `RADIO` et `CHAN`) a été utilisé pour l'essai 5 GHz ; `stop` y a aussi servi.
+(règles `nft` et `ip rule`, variables `RADIO` et `CHAN`, redémarrage de `wpad` dans `swap-*`, retrait de `mesh_fwding`) a servi aux essais 5 GHz et maillage.
 
 ## Pourquoi
 
@@ -118,3 +118,26 @@ Même montage (Deco 1 en point d'accès `wds-ap`, Deco 2 en client `wds-sta`), a
 **Conséquence** : pour deux Deco sous OpenWrt, une liaison Wi-Fi 5 GHz en vrai pont (WDS) est possible **sans `relayd`**, si les deux extrémités sont OpenWrt.
 Elle ne dépend pas de la Livebox, qui ne supporte probablement pas le 4addr (non testé). Reste à décider de ce que doit faire la liaison montante
 si le Deco passerelle remplace la Livebox (voir les notes sur CPL + Wi-Fi).
+
+## Résultats du maillage 802.11s (29/10/2026)
+
+Paquet `wpad-mesh-mbedtls` installé sur les deux Deco (puis `wpad-basic-mbedtls` remis après l'essai, `swap-basic`).
+
+**5 GHz (`ath10k-ct`, canal 112, DFS) : l'appairage ne s'établit pas.** L'authentification SAE réussit des deux côtés
+(`authenticated: yes`, `authorized: yes`, signal −50 dBm), mais le lien reste à `mesh plink: OPN_SNT` et `wpa_supplicant` répète
+`Mesh MPM: failed to send peering frame` pendant plus de 80 s (aucun chemin dans `mpath dump`). Le noyau a aussi journalisé
+`ath10k_pci: failed to create vdev 3 peer for AP/IBSS: -145` lors d'un rechargement du Wi-Fi ; je n'ai pas établi le lien avec l'échec.
+**Cause non établie** : canal DFS (le maillage n'effectue pas de CAC de lui-même), limite du firmware `ath10k` CT, ou autre.
+Non essayé : un canal 5 GHz sans DFS (cela imposerait de déplacer la radio 5 GHz du Deco 1, qui porte sa liaison avec la Livebox).
+
+**2,4 GHz (`ath9k`, canal 1) : le maillage fonctionne.** `mesh plink: ESTAB`, `MESH-PEER-CONNECTED`, chemin d'un saut dans `mpath dump`
+(métrique 10241), et `probe` : 5 réponses sur 5 (1,3 à 67,8 ms) avec l'adresse MAC étrangère, apprise par le Deco 1. Débit non mesuré.
+
+**Deux erreurs de mon script, corrigées (elles ont fait perdre l'essai 5 GHz une première fois)** :
+1. `mesh_fwding` est refusé par `wpa_supplicant` (`unknown network field 'mesh_fwding'`) : retiré (le noyau transfère par défaut).
+2. **Remplacer le paquet `wpad` ne change pas le démon déjà lancé.** L'ancien `wpa_supplicant` (variante basic) a refusé le mode maillage
+   (`too large mode (value=5 max_value=4)`) tant que le service n'était pas redémarré : `swap-*` fait maintenant `/etc/init.d/wpad restart`.
+   `wifi reload` ne suffit pas.
+
+**À retenir** : pour une liaison 5 GHz en vrai pont entre deux Deco OpenWrt, **le WDS est la solution démontrée** ; le maillage 802.11s
+ne l'est que sur le 2,4 GHz. Les deux essais ont duré quelques minutes, Deco côte à côte, sans mesure de stabilité.

@@ -433,6 +433,7 @@ Après un `sysupgrade` : vérifier `which relayd`, `uci show plc` (même NMK sur
 
 Pas avec une liaison Wi-Fi « client » vers la Livebox : une station Wi-Fi standard ne peut émettre que des trames avec sa propre adresse MAC, donc on ne peut pas la mettre dans un pont ; `relayd` est le contournement (pseudo-pont en espace utilisateur). Options :
 - **Pont réel via WDS/4addr** (`option wds '1'` sur l'interface client) : exige que la Livebox accepte les trames 4-adresses. Je ne sais pas si la Livebox 4 le fait ; **non testé**.
+  Entre **deux Deco sous OpenWrt**, le WDS a été essayé le 29/10/2026 : il fonctionne en pont réel sur le 2,4 GHz (`ath9k`) et sur le 5 GHz (`ath10k-ct`, 196 Mbit/s mesurés, limités par le processeur), sans `relayd`. Le maillage 802.11s fonctionne sur le 2,4 GHz mais échoue sur le 5 GHz (canal DFS 112) pour une cause non établie. Détails et pièges dans `tools/wifi-backhaul-test/README.md`.
 - **Maillage 802.11s** : la Livebox ne le parle pas.
 - **Routage avec NAT** (double NAT) : écarté (voir plus haut).
 - **Ne pas passer par le Wi-Fi pour la liaison montante** : un Deco relié à la Livebox par Ethernet ou CPL est un vrai pont, sans `relayd`. C'est aussi ce qui supprimerait la perte de débit due à la radio partagée et au processeur du Deco 1 (voir les mesures). Recommandé si un Deco peut être placé près de la Livebox ; **non essayé**.

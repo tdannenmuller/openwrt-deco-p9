@@ -114,7 +114,6 @@ mesh)
 	uci set wireless.wdstest.mode=mesh
 	uci set wireless.wdstest.mesh_id="$SSID"
 	uci set wireless.wdstest.encryption=sae
-	uci set wireless.wdstest.mesh_fwding=1
 	apply
 	;;
 probe)
@@ -136,8 +135,12 @@ swap-mesh|swap-basic)
 	if [ "$1" = swap-mesh ]; then new=wpad-mesh-mbedtls; old=wpad-basic-mbedtls; else new=wpad-basic-mbedtls; old=wpad-mesh-mbedtls; fi
 	apk info -e "$new" >/dev/null 2>&1 && die "$new est déjà installé"
 	f=$(ls $PKG/$new-*.apk 2>/dev/null | head -1); [ -n "$f" ] || die "$PKG/$new-*.apk introuvable"
-	echo "remplacement de $old par $new (Wi-Fi coupé ~30 s sur ce Deco)"
+	echo "remplacement de $old par $new (Wi-Fi coupé 30 à 60 s sur ce Deco, redémarrage du service wpad)"
 	apk del "$old" && apk add --allow-untrusted --no-network "$f" || { echo "ECHEC : retour à $old"; apk add --allow-untrusted --no-network $PKG/$old-*.apk; die "remplacement échoué"; }
+	# Le démon wpad déjà lancé garde l'ancien code en mémoire : sans redémarrage, il ne connaît pas le mode
+	# « mesh » (« too large mode (value=5 max_value=4) ») ou continue d'ignorer les options de la nouvelle variante.
+	/etc/init.d/wpad restart
+	sleep 5
 	wifi reload
 	apk info | grep -E '^wpad'
 	;;
