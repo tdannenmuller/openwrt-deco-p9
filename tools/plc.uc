@@ -77,6 +77,21 @@ function get_nmk() {
 	return substr(r, 6, 32);
 }
 
+// Écrit la NMK et vérifie par relecture. La puce répond souvent tard (parfois après le
+// délai d'attente) à une écriture réussie : l'absence d'accusé n'est donc pas une erreur,
+// seule la relecture compte.
+function write_nmk(n) {
+	mme("18a0", n + "0000");
+	sleep(SET_NMK_DELAY * 1000);
+	for (let i = 0; i < 5; i++) {
+		let back = get_nmk();
+		if (back == n)
+			return true;
+		sleep(2000);
+	}
+	return false;
+}
+
 let cmd = ARGV[0];
 if (cmd == "get-nmk") {
 	let n = get_nmk();
@@ -91,17 +106,11 @@ if (cmd == "get-nmk") {
 		warn("set-nmk attend 32 caractères hexadécimaux\n");
 		exit(1);
 	}
-	if (mme("18a0", n + "0000") == null) {
-		warn("pas de réponse à l'écriture\n");
+	if (!write_nmk(n)) {
+		warn("la NMK relue ne correspond pas à celle écrite\n");
 		exit(1);
 	}
-	sleep(SET_NMK_DELAY * 1000);
-	let back = get_nmk();
-	if (back != n) {
-		warn("relecture différente : ", back ?? "aucune réponse", "\n");
-		exit(1);
-	}
-	print("NMK écrite et relue : ", back, "\n");
+	print("NMK écrite et relue : ", n, "\n");
 } else if (cmd == "pushbutton") {
 	let r = mme("8ca0", "00");
 	print("réponse : ", r ?? "aucune", "\n");
@@ -135,12 +144,7 @@ if (cmd == "get-nmk") {
 		log("NMK déjà à jour");
 		exit(0);
 	}
-	if (mme("18a0", want + "0000") == null) {
-		log("pas de réponse à l'écriture de la NMK");
-		exit(1);
-	}
-	sleep(SET_NMK_DELAY * 1000);
-	if (get_nmk() != want) {
+	if (!write_nmk(want)) {
 		log("la NMK relue ne correspond pas à celle écrite");
 		exit(1);
 	}

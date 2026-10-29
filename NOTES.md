@@ -146,7 +146,7 @@ Pour désactiver le CPL : `uci set plc.main.enabled='0'` (le port 2 reste dans l
 
 **Vérifié** : les trois patchs s'appliquent sans conflit (`git am`) sur la base `6b7ea6896a` et donnent l'arbre attendu ; les fichiers du paquet sont ceux testés sur les Deco (lecture, écriture, démarrage avec correction de la NMK).
 
-**NON vérifié : le paquet et l'image n'ont pas été construits.** Le `Makefile` de `plc-bcm` suit celui d'un paquet existant sans compilation (`gre`), mais n'a pas été exécuté (pas de machine Linux disponible pendant ce travail ; macOS n'est pas supporté par OpenWrt). Restent à faire, sur une machine de build : construire l'image, la flasher, et vérifier que `/etc/config/plc`, `/etc/init.d/plc` (activé au démarrage, lien `S99plc`) et `/usr/sbin/plc-nmk` sont présents, que le service journalise `plc: NMK écrite et relue` (ou « déjà à jour »), que le port 2 est dans le VLAN 1 sans intervention, et que deux Deco neufs se joignent par le CPL. Pas testé non plus : une image sans `luci`, le comportement quand la puce ne répond pas dans les 2 minutes d'attente, et une puce dont le MAC n'est pas « MAC du Deco + 5 » (le stock le corrigeait ; ce service ne le fait pas).
+**NON vérifié : le paquet et l'image n'ont pas été construits.** Le `Makefile` de `plc-bcm` suit celui d'un paquet existant sans compilation (`gre`), mais n'a pas été exécuté (pas de machine Linux disponible pendant ce travail ; macOS n'est pas supporté par OpenWrt). Restent à faire, sur une machine de build : construire l'image, la flasher, et vérifier que `/etc/config/plc`, `/etc/init.d/plc` (activé au démarrage, lien `S99plc`) et `/usr/sbin/plc-nmk` sont présents, que le service journalise `plc: NMK écrite et relue` (ou « déjà à jour »), que le port 2 est dans le VLAN 1 sans intervention, et que deux Deco neufs se joignent par le CPL. Le défaut « pas de réponse à l'écriture de la NMK » (la puce répond parfois après le délai) est corrigé : `plc.uc` écrit puis vérifie par relecture (jusqu'à 5 essais), l'absence d'accusé n'est plus une erreur ; ce cas « accusé en retard » n'a **pas** pu être reproduit pour le tester (les écritures de test ont été acquittées à temps). Pas testé non plus : une image sans `luci`, le comportement quand la puce ne répond pas dans les 2 minutes d'attente, et une puce dont le MAC n'est pas « MAC du Deco + 5 » (le stock le corrigeait ; ce service ne le fait pas).
 
 ### Appairer deux Deco : utiliser la même NMK
 
@@ -416,6 +416,30 @@ Limites :
 - **Pas de partage de voisinage** entre les deux Deco (pas de `usteer` ni de `dawn`) : chaque Deco n'annonce que lui-même dans ses rapports 802.11k. Le client décide seul quand changer.
 - **Non testé avec un vrai client** : je n'ai pas mesuré un passage d'un Deco à l'autre (ni la durée de coupure). Certains vieux appareils peuvent refuser de se connecter à un SSID en `FT-PSK` ; si cela arrive, retirer `ieee80211r` sur les deux Deco.
 - `network restart` n'est pas utilisé : seul `wifi reload` a été lancé (voir « Incident »). Sur le Deco 1, `wifi reload` coupe quelques secondes son Wi-Fi client vers la Livebox, et donc l'accès SSH par ce chemin.
+
+## Incident du premier sysupgrade avec le paquet `plc-bcm` (29/10/2026)
+
+Après un `sysupgrade` avec « conserver la configuration » vers la première image avec CPL, les deux Deco ont cessé de répondre sur leurs adresses. Causes trouvées (vérifiées sur les Deco) :
+
+1. **`relayd` avait disparu du Deco 1.** Il avait été installé à la main après le premier flash, il n'est pas dans l'image, et un `sysupgrade` ne conserve que la configuration (`/etc/config`), pas les paquets ajoutés. La configuration `relay_bridge` restait, sans le programme : le Deco 1 était coupé de la Livebox, donc sans Internet pour réinstaller le paquet. Remède appliqué : copie de l'`.apk` par câble (`cat > /tmp/relayd.apk`) puis `apk add --allow-untrusted --no-network /tmp/relayd.apk`. Correctif durable : `relayd` et `luci-proto-relay` sont maintenant dans le `.config` de `build-image.sh` (et contrôlés par `check-image.sh`). Dans cette version, `relayd` n'a pas de gestionnaire netifd séparé : c'est son script d'init qui lit les interfaces `proto relay`.
+2. **Les deux Deco n'avaient plus la même NMK.** Le service `plc` n'avait été installé à la main que sur le Deco 1 : sa config privée a été conservée. Le Deco 2 n'avait pas ce fichier, il a reçu celui du paquet (NMK HomePlug AV publique) : deux réseaux CPL différents, le Deco 2 était isolé. Remède : même NMK dans `/etc/config/plc` des deux Deco. Test de diagnostic : écrire temporairement la clé par défaut sur la puce du Deco 1 a fait réapparaître le Deco 2.
+3. **Les liens `/etc/rc.d` ne sont pas conservés** : `firewall`, `dnsmasq` et `odhcpd` ont été réactivés par l'image sur les deux Deco (le Deco 2 les avait désactivés). Sans effet visible ici (DHCP ignoré), à re-désactiver si voulu.
+
+Après un `sysupgrade` : vérifier `which relayd`, `uci show plc` (même NMK sur tous les Deco), `ls /etc/rc.d`.
+
+**Piège du Mac branché en Ethernet sur le Deco pour le dépanner** : si le Wi-Fi du Mac et l'Ethernet sont dans le même sous-réseau (`192.168.0.0/24`), macOS envoie tout par le Wi-Fi et `ping 192.168.0.2` échoue alors que le câble fonctionne. Forcer l'interface : `ping -b en5 192.168.0.2`, `ssh -o ProxyCommand='nc -b en5 %h %p' root@192.168.0.2`.
+
+### Peut-on se passer de `relayd` ?
+
+Pas avec une liaison Wi-Fi « client » vers la Livebox : une station Wi-Fi standard ne peut émettre que des trames avec sa propre adresse MAC, donc on ne peut pas la mettre dans un pont ; `relayd` est le contournement (pseudo-pont en espace utilisateur). Options :
+- **Pont réel via WDS/4addr** (`option wds '1'` sur l'interface client) : exige que la Livebox accepte les trames 4-adresses. Je ne sais pas si la Livebox 4 le fait ; **non testé**.
+- **Maillage 802.11s** : la Livebox ne le parle pas.
+- **Routage avec NAT** (double NAT) : écarté (voir plus haut).
+- **Ne pas passer par le Wi-Fi pour la liaison montante** : un Deco relié à la Livebox par Ethernet ou CPL est un vrai pont, sans `relayd`. C'est aussi ce qui supprimerait la perte de débit due à la radio partagée et au processeur du Deco 1 (voir les mesures). Recommandé si un Deco peut être placé près de la Livebox ; **non essayé**.
+
+### Construire sur le Mac : non réalisable pour l'instant
+
+Le Mac n'a que 4,8 Go libres sur 460 Go (disque plein à 99 %, pas d'autre volume), alors qu'un build OpenWrt demande environ 30 à 40 Go. Docker et Colima n'ont donc **pas** été installés. Il faudrait libérer au moins 40 Go ou utiliser un disque externe, puis une machine virtuelle Linux (Colima/Docker) avec `build.sh`. Le build se fait pour l'instant sur une machine Linux séparée (`CLAUDE.md`).
 
 ## Liste de ce qui n'est PAS vérifié
 

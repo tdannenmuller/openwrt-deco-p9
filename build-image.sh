@@ -39,11 +39,15 @@ CONFIG_TARGET_ath79_generic=y
 CONFIG_TARGET_ath79_generic_DEVICE_tplink_deco-p9-v1v2=y
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y
+# Relais Wi-Fi vers la Livebox (proto « relay »). Absent de l'image, un sysupgrade le supprime
+# alors que sa configuration est conservée : le Deco perd alors sa liaison avec la Livebox.
+CONFIG_PACKAGE_relayd=y
+CONFIG_PACKAGE_luci-proto-relay=y
 CFG
 make defconfig
 
-# plc-bcm doit venir de DEVICE_PACKAGES (patch 0003), pas de ce fichier.
-for opt in plc-bcm ucode-mod-fs ucode-mod-socket ucode-mod-uci; do
+# plc-bcm doit venir de DEVICE_PACKAGES (patch 0003), pas de ce fichier ; relayd vient du .config ci-dessus.
+for opt in plc-bcm ucode-mod-fs ucode-mod-socket ucode-mod-uci relayd luci-proto-relay; do
 	grep -q "^CONFIG_PACKAGE_$opt=y" .config || { echo "ERREUR : $opt n'est pas sélectionné dans .config"; exit 1; }
 done
 

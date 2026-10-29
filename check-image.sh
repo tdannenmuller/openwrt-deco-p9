@@ -23,7 +23,7 @@ chk "image sysupgrade présente" "[ -n \"$SYSUP\" ]"
 chk "image factory présente"    "[ -n \"$FACT\" ]"
 [ -n "$SYSUP" ] && chk "sysupgrade <= 13824k (14155776 octets) : $(stat -c %s "$SYSUP" 2>/dev/null) octets" "[ $(stat -c %s "$SYSUP") -le 14155776 ]"
 [ -n "$FACT" ]  && chk "factory : product_name P9" "strings -n 8 '$FACT' | grep -q 'product_name:P9'"
-[ -n "$MANIF" ] && for p in plc-bcm ucode-mod-socket ucode-mod-uci ucode-mod-fs ucode; do
+[ -n "$MANIF" ] && for p in plc-bcm ucode-mod-socket ucode-mod-uci ucode-mod-fs ucode relayd luci-proto-relay; do
 	chk "manifeste : $p" "grep -q '^$p ' '$MANIF'"
 done
 
@@ -38,6 +38,8 @@ else
 	chk "/etc/config/plc : enabled 1"   "grep -q \"option enabled '1'\" '$ROOT/etc/config/plc'"
 	chk "/etc/config/plc : NMK par défaut HomePlug AV" "grep -q \"option nmk '50d3e4933f855b7040784df815aa8db7'\" '$ROOT/etc/config/plc'"
 	for m in socket uci fs; do chk "module ucode $m.so" "[ -f '$ROOT/usr/lib/ucode/$m.so' ]"; done
+	chk "/usr/sbin/relayd présent"      "[ -x '$ROOT/usr/sbin/relayd' ]"
+	chk "/etc/rc.d/S*relayd (activé au démarrage)" "ls '$ROOT'/etc/rc.d/S*relayd"
 	chk "02_network : port 2 pour le P9" "awk '/deco-p9-v1v2/{f=1} f&&/2:lan:3/{ok=1} END{exit !ok}' '$ROOT/etc/board.d/02_network'"
 fi
 

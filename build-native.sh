@@ -10,6 +10,8 @@ CONFIG_TARGET_ath79_generic=y
 CONFIG_TARGET_ath79_generic_DEVICE_tplink_deco-p9-v1v2=y
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_relayd=y
+CONFIG_PACKAGE_luci-proto-relay=y
 CFG
 make defconfig
 make download -j8

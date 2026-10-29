@@ -18,7 +18,7 @@ Lis d'abord `NOTES.md` : sections « CPL » et « Paquet OpenWrt `plc-bcm` ».
 ```
 Machine Linux avec la toolchain OpenWrt (paquets listés dans `NOTES.md`, « Construire »). Variables : `WORK` (dossier de travail), `PUBLISH=1` (copie aussi dans `images/` et régénère `SHA256SUMS`, seulement après vérification). Le premier build est long. Le résultat est copié dans `out/` (ignoré par git).
 
-`check-image.sh` vérifie : paquet construit, images présentes, taille du sysupgrade ≤ 13824k, `product_name:P9`, manifeste (plc-bcm, ucode-mod-socket, -uci, -fs), contenu du rootfs (`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, lien `/etc/rc.d/S99plc`, `/etc/config/plc` avec la NMK par défaut, modules `ucode`), et `02_network` avec le port 2. Il n'écrit rien.
+`check-image.sh` vérifie : paquet construit, images présentes, taille du sysupgrade ≤ 13824k, `product_name:P9`, manifeste (plc-bcm, ucode-mod-socket, -uci, -fs, relayd, luci-proto-relay), contenu du rootfs (`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, lien `/etc/rc.d/S99plc`, `/usr/sbin/relayd` et son lien `S*relayd`, `/etc/config/plc` avec la NMK par défaut, modules `ucode`), et `02_network` avec le port 2. Il n'écrit rien.
 
 Fais aussi les contrôles manuels de `NOTES.md` (« Vérifier l'image ») : comparaison d'en-têtes avec une image M4R officielle, magic `hsqs`.
 

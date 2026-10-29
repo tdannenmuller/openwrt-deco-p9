@@ -1,4 +1,4 @@
-From 55f4b6a43564c478fea26abcbeaac63cbd268384 Mon Sep 17 00:00:00 2001
+From e3f23ba202821d4a9778faee7de418b5a826537d Mon Sep 17 00:00:00 2001
 From: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
 Date: Thu, 29 Oct 2026 00:04:37 +0100
 Subject: [PATCH] ath79: add a powerline key service and port 2 for TP-Link
@@ -20,12 +20,12 @@ on a Deco P9; the image itself has not been built or booted.
 Signed-off-by: Thomas Dannenmuller <thomas.dannenmuller@opendigitaleducation.com>
 ---
  package/utils/plc-bcm/Makefile                |  46 ++++++
- package/utils/plc-bcm/files/plc-nmk.uc        | 151 ++++++++++++++++++
+ package/utils/plc-bcm/files/plc-nmk.uc        | 155 ++++++++++++++++++
  package/utils/plc-bcm/files/plc.config        |   8 +
  package/utils/plc-bcm/files/plc.init          |  22 +++
  .../generic/base-files/etc/board.d/02_network |   6 +-
  target/linux/ath79/image/generic-tp-link.mk   |   2 +-
- 6 files changed, 233 insertions(+), 2 deletions(-)
+ 6 files changed, 237 insertions(+), 2 deletions(-)
  create mode 100644 package/utils/plc-bcm/Makefile
  create mode 100755 package/utils/plc-bcm/files/plc-nmk.uc
  create mode 100644 package/utils/plc-bcm/files/plc.config
@@ -85,10 +85,10 @@ index 0000000..e1a14d0
 +$(eval $(call BuildPackage,plc-bcm))
 diff --git a/package/utils/plc-bcm/files/plc-nmk.uc b/package/utils/plc-bcm/files/plc-nmk.uc
 new file mode 100755
-index 0000000..ee62ed8
+index 0000000..278d236
 --- /dev/null
 +++ b/package/utils/plc-bcm/files/plc-nmk.uc
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,155 @@
 +#!/usr/bin/ucode
 +// Parle à la puce CPL Broadcom du TP-Link Deco P9 (ethertype 0x8912).
 +//   plc.uc get-nmk | set-nmk <32 hex> | pushbutton | sync
@@ -168,6 +168,21 @@ index 0000000..ee62ed8
 +	return substr(r, 6, 32);
 +}
 +
++// Écrit la NMK et vérifie par relecture. La puce répond souvent tard (parfois après le
++// délai d'attente) à une écriture réussie : l'absence d'accusé n'est donc pas une erreur,
++// seule la relecture compte.
++function write_nmk(n) {
++	mme("18a0", n + "0000");
++	sleep(SET_NMK_DELAY * 1000);
++	for (let i = 0; i < 5; i++) {
++		let back = get_nmk();
++		if (back == n)
++			return true;
++		sleep(2000);
++	}
++	return false;
++}
++
 +let cmd = ARGV[0];
 +if (cmd == "get-nmk") {
 +	let n = get_nmk();
@@ -182,17 +197,11 @@ index 0000000..ee62ed8
 +		warn("set-nmk attend 32 caractères hexadécimaux\n");
 +		exit(1);
 +	}
-+	if (mme("18a0", n + "0000") == null) {
-+		warn("pas de réponse à l'écriture\n");
++	if (!write_nmk(n)) {
++		warn("la NMK relue ne correspond pas à celle écrite\n");
 +		exit(1);
 +	}
-+	sleep(SET_NMK_DELAY * 1000);
-+	let back = get_nmk();
-+	if (back != n) {
-+		warn("relecture différente : ", back ?? "aucune réponse", "\n");
-+		exit(1);
-+	}
-+	print("NMK écrite et relue : ", back, "\n");
++	print("NMK écrite et relue : ", n, "\n");
 +} else if (cmd == "pushbutton") {
 +	let r = mme("8ca0", "00");
 +	print("réponse : ", r ?? "aucune", "\n");
@@ -226,12 +235,7 @@ index 0000000..ee62ed8
 +		log("NMK déjà à jour");
 +		exit(0);
 +	}
-+	if (mme("18a0", want + "0000") == null) {
-+		log("pas de réponse à l'écriture de la NMK");
-+		exit(1);
-+	}
-+	sleep(SET_NMK_DELAY * 1000);
-+	if (get_nmk() != want) {
++	if (!write_nmk(want)) {
 +		log("la NMK relue ne correspond pas à celle écrite");
 +		exit(1);
 +	}
