@@ -417,11 +417,38 @@ Limites :
 - **Non testé avec un vrai client** : je n'ai pas mesuré un passage d'un Deco à l'autre (ni la durée de coupure). Certains vieux appareils peuvent refuser de se connecter à un SSID en `FT-PSK` ; si cela arrive, retirer `ieee80211r` sur les deux Deco.
 - `network restart` n'est pas utilisé : seul `wifi reload` a été lancé (voir « Incident »). Sur le Deco 1, `wifi reload` coupe quelques secondes son Wi-Fi client vers la Livebox, et donc l'accès SSH par ce chemin.
 
+## Build avec le paquet plc-bcm (patch 0003) — 29/10/2026
+
+Construit (machine Linux, toolchain OpenWrt, `./build-image.sh`) : les 3 patchs sur main à `6b7ea6896a3a83c9ae80d31e8d35d911e032268f`. `check-image.sh` passe entièrement (`TOUT EST BON`) après une correction du script lui-même.
+
+**Bug trouvé et corrigé dans `check-image.sh` (pas dans l'image) :** le script a `set -o pipefail`. Le contrôle `strings -n 8 "$FACT" | grep -q 'product_name:P9'` était signalé en échec alors que `grep` trouvait bien la chaîne (12 occurrences). Cause : `grep -q` sort dès la première correspondance, ce qui coupe le tube pendant que `strings` écrit encore ; avec `pipefail`, bash remonte alors le code de sortie de `strings` (tué par SIGPIPE), pas celui de `grep`. Vérifié à la main, hors script, sans `pipefail` : succès systématique. Correction : chaque contrôle tourne maintenant dans un sous-shell avec `pipefail` désactivé, sans changer ce qui est testé. Voir le commit `check-image.sh: fix false FAIL on strings|grep -q under pipefail` sur la branche `build-2026-10-29`.
+
+**Résultat du build, images dans `images/` :**
+
+| Fichier | SHA256 |
+|---|---|
+| `openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-factory.bin` | `7b6b5bcfdfba411b5cfeb74d48b481ab0f20a16e62dd37bbd175e39b43c5bf2c` |
+| `openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-sysupgrade.bin` | `9e4f1ff8e3b133993b99786fec9729e2f991f279df427259a2d0773f9cc456e2` |
+| `openwrt-ath79-generic-tplink_deco-p9-v1v2-initramfs-kernel.bin` | `a901c4c0540b568d198a92d823d9a93b222f33d3f392054d967619265b222e6c` |
+
+Ces fichiers remplacent ceux du premier build (27/10) : ils contiennent en plus `plc-bcm` et les modules `ucode`.
+
+**Vérifications faites (sans matériel) :**
+- Les 3 patchs s'appliquent sans conflit sur la base.
+- Paquet `plc-bcm` construit, présent dans le manifeste, avec `ucode-mod-socket`, `ucode-mod-uci`, `ucode-mod-fs`.
+- `/usr/sbin/plc-nmk` exécutable avec shebang `ucode`, `/etc/init.d/plc` activé au démarrage (`/etc/rc.d/S99plc`), `/etc/config/plc` avec `enabled 1` et la NMK par défaut HomePlug AV (`50d3e4933f855b7040784df815aa8db7` — c'est la clé publique du standard, pas un secret).
+- Sysupgrade : 7 864 608 octets, soit une marge de 6,3 Mo sous la limite de 13 824 ko.
+- Factory : `product_name:P9` présent, 12 entrées comme avant.
+- `02_network` : le port 2 est bien ajouté au LAN pour `tplink,deco-p9-v1v2`, avec un commentaire renvoyant au paquet `plc-bcm`.
+- Rootfs : squashfs placé exactement où attendu après le noyau, comme pour les builds précédents.
+
+**Non vérifié (identique au reste du dépôt) :** rien de tout ça n'a tourné sur un vrai Deco. `check-image.sh` le dit lui-même : c'est la première exécution de ce paquet depuis une image complète, pas seulement installé à la main.
+
 ## Liste de ce qui n'est PAS vérifié
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).
 - Confirmé : le firmware d'origine 1.3.0 refuse l'image factory sans erreur visible (voir journal). La méthode TFTP contourne ce blocage.
-- Le fonctionnement du CPL de bout en bout (le port 2 et le protocole Broadcom sont vérifiés, voir la section CPL ; l'appairage entre deux Deco ne l'est pas).
+- Le fonctionnement du CPL de bout en bout (le port 2 et le protocole Broadcom sont vérifiés, voir la section CPL ; l'appairage entre deux Deco ne l'est pas). Le paquet `plc-bcm` lui-même n'a jamais tourné depuis une image compilée avant ce build du 29/10 : il n'était testé qu'installé à la main.
 - Les LED : seule la LED d'alimentation et la LED 5 GHz du M4R sont définies. La LED rouge 2,4 GHz (GPIO 1) n'est pas reprise.
 - Le sysupgrade depuis une installation faite avec le fork sans `-F`.
 - Le Wi-Fi 2,4 GHz et 5 GHz avec ath10k-ct sur le QCA9886.
@@ -430,3 +457,4 @@ Limites :
 - La stabilité du pont relayd dans la durée, et le roaming entre la Livebox et le Deco.
 - La cause du figement d'un Deco au `network restart` par SSH, et le Wi-Fi du second Deco en bridge (voir « Second Deco en bridge simple »).
 - Le roaming 802.11k/r entre les deux Deco avec un vrai client (durée de coupure, appareils incompatibles FT-PSK), et 802.11v (indisponible avec `wpad-basic`).
+- Que les modules `ucode` et `plc-bcm` cohabitent correctement avec `luci`/`luci-ssl` sur un vrai démarrage (vérifié seulement statiquement dans le rootfs).
