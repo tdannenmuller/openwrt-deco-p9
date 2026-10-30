@@ -66,3 +66,23 @@ n'aboutit pas, silencieusement (pas de message d'erreur, juste pas de bail).
 - https://www.lafois.com/2021/10/09/replacing-orange-livebox-by-an-edgerouter-with-ftth/
 - https://vincent.bernat.ch/en/blog/2019-orange-livebox-linux
 - https://wiki.csnu.org/index.php/Fibre_orange_en_DHCP_avec_routeur_pfsense
+
+## Essai à blanc sur un Deco sans ONT (30/10/2026)
+
+`to-router.uc` (sur le Deco 2, avec annulation automatique) a appliqué **seulement** le VLAN 832 du commutateur et l'interface `wan`,
+puis tout été annulé seul au bout du délai. Ce qui est **vérifié**, sans ONT ni câble :
+- `swconfig` crée bien le périphérique **`eth0.832`** (VID 832) quand on ajoute `config switch_vlan` avec `vlan '2'`, `vid '832'`, `ports '0t 3t'` ;
+- le client DHCP envoie sur ce VLAN un DISCOVER avec `Hostname livebox`, `Vendor-Class sagem`, `Client-ID ether <MAC>`, `User-Class
+  FSVDSL_livebox.Internet.softathome.Livebox4` et l'option 90 (donc `vendorid` + `clientid` + `sendopts 77` et `90` suffisent) ;
+- **priorité 802.1p** : avec une section `device` complète (`type '8021q'`, `ifname`, `vid`, `egress_qos_mapping`), les trames sortent en
+  `vlan 832, p 6` et `/proc/net/vlan/eth0.832` affiche `EGRESS priority mappings: 0:6 1:0 6:6`. Sans `type/ifname/vid`, la section est
+  ignorée (`p 0`). **Non vérifié** : que la puce `ar8327` conserve cette priorité sur le fil du port WAN (il faudrait une capture de
+  l'autre côté du câble), et qu'Orange en tienne compte ;
+- l'annulation automatique restaure bien tout (VLAN 1 à `2 3 5 0t`, plus d'`eth0.832`, plus d'interface `wan`).
+
+**Erreurs trouvées dans le gabarit d'origine** (corrigées dans `network-wan-snippet.txt`) : `vendorclass` et `userclass` n'existent pas dans
+le client DHCP d'OpenWrt ; `sendopts` 12, 60 et 61 faisaient doublon ; sans `defaultreqopts '0'`, `netifd` ajoute les options 12 et 42 à la liste
+demandée. Le `clientid` DHCPv6 est à remplacer aussi (voir le gabarit). Le `/etc/config/orange-auth` et les scripts de jeton n'ont pas été exécutés.
+
+**Pas encore écrit** : la conversion en routeur (adresse LAN, serveur DHCP, NAT/pare-feu, services `dnsmasq`/`firewall` à activer, confirmation
+automatique si le WAN obtient un bail). Le mot de passe du jeton reste à trancher (voir la discussion dans `NOTES.md`).
