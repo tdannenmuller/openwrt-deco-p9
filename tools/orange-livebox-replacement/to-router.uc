@@ -12,6 +12,7 @@
 //   to-router.uc restore [reload=no]                 revient à la configuration d'avant « convert » (sauvegarde dans /root/backup-router)
 //   to-router.uc guard   [lan_ip=..]                 dit si « lan_ip » répond déjà (ce que convert vérifie avant de toucher à quoi que ce soit)
 //   to-router.uc selftest                            lit les vérifications de succès de convert (wan, ping, DNS) et l'état des services
+//   to-router.uc tap go=yes [ont_port=3 livebox_port=5 timeout=900]   VLAN 832 transparent ONT <-> Livebox (pour capturer ce que la Livebox envoie) ; untap l'annule
 //   to-router.uc diag                                état du VLAN, de l'interface WAN et du périphérique
 //
 // Paramètres (clé=valeur) :
@@ -40,6 +41,9 @@ const USERCLASS77 = "2b46535644534c5f6c697665626f782e496e7465726e65742e736f66746
 // jeton factice (plan, check, dry-run) : sert seulement à voir le format de l'option sur le fil. Pas un vrai jeton Orange.
 const DUMMY_AUTH = "00:00:00:00:00:00:00:00:00:00:00:1a:09:00:00:05:58:01:03:41:01:0b:66:74:69:2f:74:65:73:74:65:75:72";
 const DUMMY_MAC = "02:00:00:00:00:00";
+// option 125 (vendor-specific) envoyée par une vraie Livebox 4 (capturée le 30/10/2026) : entreprise 0x558, sous-option 2.
+// Contenu non compris ; reprise telle quelle pour que la requête ressemble à celle de la Livebox.
+const OPT125 = "000005580c020a1c0000ffffffffffffff";
 
 let cmd = shift(ARGV);
 for (let a in ARGV) {
@@ -108,15 +112,21 @@ function build_ops(full, mac, auth) {
 	if (full || opts.qos == "1")
 		push(ops, ["add", { config: "network", type: "device", name: "wan_dev", values: {
 			name: eth, type: "8021q", ifname: "eth0", vid: opts.vid,
+			// adresse MAC de la Livebox sur le fil (le « macaddr » de l'interface est ignoré quand le périphérique a sa propre section)
+			macaddr: mac,
 			egress_qos_mapping: [ "0:6", "1:0", "6:6" ] } }]);
 	let wan = {
 		proto: "dhcp", device: eth, auto: "1",
-		hostname: "livebox", vendorid: "sagem",
-		macaddr: mac, clientid: "01" + mac_nc,
+		// la vraie Livebox n'envoie PAS de nom d'hôte (option 12) : « * » le supprime. classlessroute=0 retire l'option 121 des options
+		// demandées (la Livebox en demande 12 : 1 3 6 15 28 51 58 59 90 119 120 125)
+		hostname: "*", classlessroute: "0", vendorid: "sagem",
+		clientid: "01" + mac_nc,
 		// defaultreqopts=0 : sinon netifd ajoute 12 et 42 à la liste d'options demandées (vu sur le fil)
 		defaultreqopts: "0", reqopts: "1 3 6 15 28 51 58 59 90 119 120 125",
-		sendopts: [ "77:" + USERCLASS77, "90:" + auth ]
+		sendopts: [ "77:" + USERCLASS77, "90:" + auth, "125:" + OPT125 ]
 	};
+	if (!(full || opts.qos == "1"))
+		wan.macaddr = mac;
 	// force_link=1 : démarre le client DHCP même sans câble (test sans ONT seulement)
 	if (!full && opts.force_link == "1")
 		wan.force_link = "1";
@@ -285,6 +295,41 @@ case "restore": {
 	break;
 }
 
+case "tap":
+case "untap": {
+	// Pont transparent du VLAN 832 entre l'ONT (ont_port) et la Livebox (livebox_port), le processeur en tiers : permet de CAPTURER
+	// ce que la vraie Livebox envoie (options DHCP, option 90, priorité 802.1p) sans que le Deco ne s'en mêle. Annulation automatique.
+	let ont = opts.ont_port || "3", lb = opts.livebox_port || "5";
+	let timeout = int(opts.timeout || "900");
+	if (cmd == "untap") {
+		let sid = open_session(60);
+		call("uci", "rollback", { ubus_rpc_session: sid });
+		log("tap : annulé à la demande (rollback)");
+		break;
+	}
+	let v1 = null, used = {};
+	c.foreach("network", "switch_vlan", (s) => { used[s.vlan] = true; if (s.vlan == "1") v1 = s[".name"]; });
+	if (!v1) die("VLAN 1 du commutateur introuvable");
+	let idx = 2;
+	while (used[idx]) idx++;
+	let p1 = filter(split(c.get("network", v1, "ports"), " "), (x) => replace(x, /[a-z]/g, "") != ont && replace(x, /[a-z]/g, "") != lb);
+	let ops = [
+		[ "set", { config: "network", section: v1, values: { ports: join(" ", p1) } } ],
+		[ "add", { config: "network", type: "switch_vlan", name: "tap_vlan", values: {
+			device: "switch0", vlan: "" + idx, vid: opts.vid, ports: `0t ${ont}t ${lb}t` } } ]
+	];
+	if (opts.go != "yes") {
+		print("TAP : voici ce qui serait fait. Rien n'est modifié sans go=yes.\n");
+		show_ops(ops);
+		break;
+	}
+	let sid = open_session(timeout + 600);
+	stage(sid, ops);
+	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
+	log(`tap : VLAN ${opts.vid} transparent entre les ports ${ont} et ${lb} ; annulation automatique dans ${timeout} s (untap pour annuler avant)`);
+	break;
+}
+
 case "guard":
 	print(opts.lan_ip, lan_ip_taken() ? " RÉPOND : convert refuserait (la Livebox est encore là)\n" : " ne répond pas : convert pourrait continuer\n");
 	break;
@@ -310,5 +355,5 @@ case "diag": {
 }
 
 default:
-	die("commande attendue : plan | check | dry-run | convert | restore | guard | selftest | diag");
+	die("commande attendue : plan | check | dry-run | convert | restore | tap | untap | guard | selftest | diag");
 }
