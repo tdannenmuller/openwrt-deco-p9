@@ -162,9 +162,14 @@ et le fait que `192.168.0.1` convienne (appareils à adresse fixe, plage DHCP `1
 | Tout en priorité 6 (mapping `0:6` sans règles) | 266 Mbit/s | **4,5 Mbit/s** |
 | Données en 0, contrôle (ICMP, IGMP, DHCP) en 6 | 271 Mbit/s | **218 Mbit/s** |
 
-`convert` installe donc, en plus du mapping `0:6 1:0 6:6` du périphérique, des règles `nft` (table `orange_prio`, service `orange-prio`) qui placent les données
-en priorité 1 (donc 0 sur le fil) et le contrôle en 6. Elles survivent à un rechargement du pare-feu (testé). **Non vérifié** : le comportement après un
-redémarrage complet, et que les règles soient reprises par un `sysupgrade` (le service n'est pas dans l'image).
+**Réglage retenu (mesuré le 30/10/2026, voir plus bas pour l'accélération)** : le périphérique `eth0.832` n'a que le mapping `6:6`, donc le trafic ordinaire
+(priorité 0) sort en priorité 0 sur le fil ; des règles `nft` (table `orange_prio` en hook `output`, service `orange-prio`) ne marquent en 6 que le contrôle généré par
+le Deco (ICMP, IGMP, DHCP unicast). `convert` installe ce mapping, ces règles et active l'accélération logicielle. Un schéma antérieur (mapping `0:6 1:0 6:6` plus des
+règles `postrouting` mettant les données en priorité 1) donnait les mêmes débits sans accélération mais **ne fonctionne pas avec elle** : les flux accélérés ne passent
+plus par netfilter, ils auraient gardé la priorité 0 et le mapping `0:6` les aurait remis en priorité 6, donc bridés.
+**Écart avec la Livebox** : la demande DHCP *broadcast* d'`udhcpc` (socket brut, invisible pour `nft`) part désormais en priorité 0 alors que la Livebox l'envoie en 6.
+Orange l'a acceptée (bail obtenu en moins d'une seconde) et l'émission n'a pas été bridée ; c'est une mesure unique, rien ne garantit qu'Orange ne changera pas.
+**Non vérifié** : le comportement après un redémarrage complet, et la reprise par un `sysupgrade` (le service et le fichier ne sont pas dans l'image).
 
 **Plafond d'environ 320 Mbit/s en filaire, dû au processeur du Deco** : depuis un NAS filaire, un flux HTTPS donne 321 Mbit/s avec le processeur du Deco à 0 %
 d'inactivité et 93 à 98 % de traitement d'interruptions. Quatre flux donnent 279 Mbit/s au total (processeur saturé aussi). Depuis le Wi-Fi d'un Mac (390 Mbit/s négociés),
@@ -173,3 +178,18 @@ environ 200 Mbit/s en émission avec le processeur libre à environ 60 % : là, 
 **Pièges de mesure rencontrés** : `wget` de BusyBox est lent et en HTTPS il sature le processeur du Deco (il mesure le Deco, pas la ligne) ; utiliser `iperf3` ou un
 client externe. Un serveur public peut être mauvais en réception (23 à 35 Mbit/s sur l'un, 177 sur un autre depuis le même Mac). `proof.ovh.net` redirige HTTP vers
 HTTPS et ne sert qu'un flux de huit en parallèle. Des `wget` lancés en parallèle puis tués par `timeout` peuvent rester actifs : toujours les arrêter de force.
+
+### Accélération logicielle des flux (`flow_offloading`) : mesures du 30/10/2026
+`firewall.@defaults[0].flow_offloading='1'` (le pare-feu crée un `flowtable` sur `eth0` et les deux radios ; les modules `nf_flow_table` étaient déjà dans l'image).
+Appliqué avec le rollback de `rpcd`, puis confirmé. Même client filaire (le NAS), même serveur, un flux HTTPS :
+
+| | Sans accélération | Avec accélération |
+|---|---|---|
+| Réception | 321 puis 339 et 361 Mbit/s | **818 et 850 Mbit/s** |
+| Émission (NAS vers Cloudflare) | 114 à 199 Mbit/s | 162 et 167 Mbit/s (non bridée) |
+| Processeur du Deco pendant la réception | 0 % libre, 93 à 98 % d'interruptions | 0 à 4 % libre, 94 à 100 % d'interruptions |
+
+37 flux marqués `OFFLOAD` dans conntrack ; les 60 trames TCP sortantes capturées étaient en `p 0`. Depuis le Mac en Wi-Fi : émission 214 Mbit/s (193 à 198 avant),
+réception 151 Mbit/s (le Wi-Fi limite). **Le processeur reste saturé** : on ne sait pas ce que le Deco pourrait encore débiter, ni si 850 Mbit/s est limité par lui, par OVH ou par le NAS.
+**Non vérifié** : la stabilité dans la durée (mesures sur quelques minutes), le comportement avec beaucoup de flux simultanés (huit flux vers OVH n'ont pas pu être mesurés),
+et les effets de bord connus de l'accélération logicielle (par exemple sur des règles de pare-feu ou de QoS ajoutées plus tard).

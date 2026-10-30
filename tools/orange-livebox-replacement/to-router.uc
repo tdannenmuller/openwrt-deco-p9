@@ -42,18 +42,19 @@ const USERCLASS77 = "2b46535644534c5f6c697665626f782e496e7465726e65742e736f66746
 // jeton factice (plan, check, dry-run) : sert seulement à voir le format de l'option sur le fil. Pas un vrai jeton Orange.
 const DUMMY_AUTH = "00:00:00:00:00:00:00:00:00:00:00:1a:09:00:00:05:58:01:03:41:01:0b:66:74:69:2f:74:65:73:74:65:75:72";
 const DUMMY_MAC = "02:00:00:00:00:00";
-// Priorité 802.1p sur le VLAN WAN. MESURÉ (iperf3, 4 flux) : avec TOUT le trafic en priorité 6 l'émission est bridée (4,5 Mbit/s) ;
-// avec les données en priorité 0 et seulement le contrôle (ICMP, IGMP, DHCP) en priorité 6, 218 Mbit/s. Le mapping du périphérique
-// (0:6 1:0 6:6) traduit la priorité 1 en 0 sur le fil ; ces règles mettent les données en 1 et le contrôle en 6.
+// Priorité 802.1p sur le VLAN WAN. MESURÉ (iperf3, 4 flux) : avec TOUT le trafic en priorité 6, l'émission est bridée (4,5 Mbit/s) ;
+// avec les données en priorité 0 elle atteint 218 Mbit/s. Le mapping du périphérique est donc « 6:6 » seul (les données, priorité 0, sortent
+// en 0 sur le fil, y compris les flux accélérés par flow offloading qui ne passent plus par netfilter) ; ces règles ne marquent en 6 que le
+// contrôle généré par le Deco lui-même. La demande DHCP broadcast de udhcpc (socket brut, invisible pour nft) part en 0 : Orange l'a acceptée
+// (bail obtenu) et l'émission n'a pas été bridée (mesuré une fois).
 function prio_nft(eth) {
-	return `# Priorité 802.1p sur ${eth} (VLAN WAN d'Orange) : données en 0 sur le fil, contrôle (ICMP, IGMP, DHCP) en 6.
-# Sans ces règles, tout part en priorité 6 et l'émission est bridée vers 4 Mbit/s (mesuré).
+	return `# Priorité 802.1p sur ${eth} (VLAN WAN d'Orange) : le mapping du périphérique ne traduit que 6 vers 6, les données sortent donc en 0.
+# Ces règles ne marquent en 6 que le contrôle local (ICMP, IGMP, DHCP unicast). Tout en 6 bride l'émission vers 4 Mbit/s (mesuré).
 add table inet orange_prio
 delete table inet orange_prio
 table inet orange_prio {
-	chain post {
-		type filter hook postrouting priority mangle; policy accept;
-		oifname "${eth}" meta priority set 0:1
+	chain out {
+		type route hook output priority mangle; policy accept;
 		oifname "${eth}" meta l4proto { icmp, igmp, ipv6-icmp } meta priority set 0:6
 		oifname "${eth}" udp dport { 67, 547 } meta priority set 0:6
 	}
@@ -148,13 +149,13 @@ function build_ops(full, mac, auth) {
 	push(ops, ["set", { config: "network", section: v1, values: { ports: join(" ", ports_without(v1, opts.wan_port)) } }]);
 	push(ops, ["add", { config: "network", type: "switch_vlan", name: "wan_vlan", values: {
 		device: "switch0", vlan: "" + idx, vid: opts.vid, ports: "0t " + opts.wan_port + "t" } }]);
-	// priorité 802.1p : sans « type/ifname/vid » la section est ignorée (vérifié : p 0 sur le fil)
+	// priorité 802.1p : sans « type/ifname/vid » la section est ignorée (vérifié : p 0 sur le fil). Mapping « 6:6 » seul : voir prio_nft
 	if (full || opts.qos == "1")
 		push(ops, ["add", { config: "network", type: "device", name: "wan_dev", values: {
 			name: eth, type: "8021q", ifname: "eth0", vid: opts.vid,
 			// adresse MAC de la Livebox sur le fil (le « macaddr » de l'interface est ignoré quand le périphérique a sa propre section)
 			macaddr: mac,
-			egress_qos_mapping: [ "0:6", "1:0", "6:6" ] } }]);
+			egress_qos_mapping: [ "6:6" ] } }]);
 	let wan = {
 		proto: "dhcp", device: eth, auto: "1",
 		// la vraie Livebox n'envoie PAS de nom d'hôte (option 12) : « * » le supprime. classlessroute=0 retire l'option 121 des options
@@ -178,6 +179,9 @@ function build_ops(full, mac, auth) {
 		let del = filter([ "gateway", "dns" ], (o) => c.get("network", "lan", o) != null);
 		if (length(del))
 			push(ops, ["delete", { config: "network", section: "lan", options: del }]);
+		// accélération logicielle des flux : mesuré 339-361 -> 818-850 Mbit/s en réception depuis un client filaire (le processeur du Deco était le
+		// plafond). Compatible avec le mapping 6:6 : les flux accélérés ne portent aucune priorité. Voir README.
+		push(ops, ["set", { config: "firewall", section: "@defaults[0]", values: { flow_offloading: "1" } }]);
 		// serveur DHCP du LAN
 		push(ops, ["set", { config: "dhcp", section: "lan", values: {
 			ignore: "0", start: opts.dhcp_start, limit: opts.dhcp_limit, leasetime: "12h", dhcpv4: "server" } }]);
@@ -296,7 +300,7 @@ case "check": {
 	let ops = build_ops(true, DUMMY_MAC, DUMMY_AUTH);
 	let sid = open_session(120);
 	stage(sid, ops);
-	for (let cfg in [ "network", "dhcp" ]) {
+	for (let cfg in [ "network", "dhcp", "firewall" ]) {
 		let r = call("uci", "changes", { config: cfg, ubus_rpc_session: sid });
 		print("  ", cfg, " : ", length(r.changes ?? []), " opération(s) valide(s) mise(s) en attente\n");
 		call("uci", "revert", { config: cfg, ubus_rpc_session: sid });
