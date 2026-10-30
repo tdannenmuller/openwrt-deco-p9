@@ -1,0 +1,12 @@
+#!/bin/sh
+# Installation sur le Deco :
+#   ln -s /etc/config/99-wan6-delay /etc/hotplug.d/iface/99-wan6-delay
+case "$ACTION/$INTERFACE" in
+    ifup/wan)
+        sleep 3
+        ifup wan6
+        ;;
+    ifdown/wan)
+        ifdown wan6
+        ;;
+esac

@@ -473,6 +473,28 @@ Le Deco 1 a quitté la liaison Wi-Fi + `relayd` pour un câble Ethernet vers la 
 
 **Maillage 802.11s 5 GHz** : avec cette radio libre sur le canal 36, il s'établit (146 / 140 Mbit/s, pont réel). Voir `tools/wifi-backhaul-test/README.md` pour le détail, y compris l'échec précédent sur le canal DFS 112 dont la cause reste ambiguë (canal et rôle de la radio ont changé en même temps).
 
+## Remplacer la Livebox par un Deco P9 (recherche, 30/10/2026)
+
+**Jamais essayé sur l'installation réelle.** Instructions, gabarits de configuration et scripts dans
+`tools/orange-livebox-replacement/` (README détaillé là-bas). Résumé :
+
+- Orange authentifie le routeur comme une vraie Livebox (VLAN 832 + options DHCP spécifiques + un jeton
+  calculé à partir des identifiants du compte), pas seulement par DHCP simple sur le bon VLAN.
+- Le gabarit d'interface WAN et les scripts de génération/renouvellement du jeton viennent d'un projet
+  communautaire pour un routeur Turris Omnia (périphérique `8021q` noyau). Adaptés à notre commutateur
+  `swconfig` (VLAN créé dans Réseau > Commutateur, pas via un device DSA).
+- **Point non résolu** : le marquage de priorité réseau (802.1p/PCP) qu'Orange semble exiger sur les
+  trames DHCP pour ne pas brider l'émission à ~6 Mbit/s. Aucune méthode confirmée pour `swconfig` sur la
+  puce `ar8327` de ce P9 ; à tester sans ce réglage d'abord, puis mesurer.
+- La chaîne `userclass` (option 77) dépend du modèle de Livebox ; celle fournie correspond à une
+  Livebox 4.
+- Pas de décodeur TV Orange ni de téléphone fixe à reproduire dans ce foyer : non traité.
+- Aucune vraie donnée (MAC de la Livebox, identifiants Orange) n'est dans les fichiers du dépôt : à
+  remplacer sur le Deco lui-même, jamais à committer.
+
+Le Deco 1 a déjà un câble Ethernet vers la Livebox actuelle (voir plus haut, « Deco 1 relié à la Livebox
+par câble ») : c'est ce même port qui recevrait l'ONT si l'essai a lieu.
+
 ## Liste de ce qui n'est PAS vérifié
 
 - Que ton appareil a un `special_id` présent dans la liste (le firmware d'origine ne contient que ces valeurs).

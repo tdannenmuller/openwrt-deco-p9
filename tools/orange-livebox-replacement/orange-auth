@@ -1,0 +1,7 @@
+# Remplis ces deux lignes avec TES identifiants Orange (espace client, pas le Wi-Fi).
+# NE COMMITE JAMAIS ce fichier avec de vraies valeurs : garde-le hors de git une fois rempli
+# (il est dans .gitignore sous ce nom une fois copié sur le Deco, mais vérifie avant de committer).
+LOGIN="ton_identifiant_orange_sans_fti_slash"
+PASSWORD="ton_mot_de_passe_orange"
+BYTE="A"
+SALT_PREFIX="1234567890123"
