@@ -30,6 +30,12 @@ AUTH="00:00:00:00:00:00:00:00:00:00:00\
 :$(tl 3C $((2+SALT_LEN))):$(str_hex "$SALT")\
 :$(tl 03 $((2+1+SALT_LEN))):$(str_hex "$BYTE"):${MD5S}"
 
+# AUTH_ONLY=1 : affiche seulement le jeton (pour « to-router.uc convert auth=... ») sans toucher à la configuration.
+if [ -n "$AUTH_ONLY" ]; then
+    echo "$AUTH"
+    exit 0
+fi
+
 uci -q del_list network.wan.sendopts="$(uci get network.wan.sendopts | tr ' ' '\n' | grep '^90:')"
 uci add_list network.wan.sendopts="90:${AUTH}"
 

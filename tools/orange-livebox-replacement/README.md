@@ -84,5 +84,46 @@ puis tout été annulé seul au bout du délai. Ce qui est **vérifié**, sans O
 le client DHCP d'OpenWrt ; `sendopts` 12, 60 et 61 faisaient doublon ; sans `defaultreqopts '0'`, `netifd` ajoute les options 12 et 42 à la liste
 demandée. Le `clientid` DHCPv6 est à remplacer aussi (voir le gabarit). Le `/etc/config/orange-auth` et les scripts de jeton n'ont pas été exécutés.
 
-**Pas encore écrit** : la conversion en routeur (adresse LAN, serveur DHCP, NAT/pare-feu, services `dnsmasq`/`firewall` à activer, confirmation
-automatique si le WAN obtient un bail). Le mot de passe du jeton reste à trancher (voir la discussion dans `NOTES.md`).
+## Conversion complète en routeur : `to-router.uc convert` (écrite le 30/10/2026, **jamais exécutée de bout en bout**)
+
+Ce qu'elle fait, dans l'ordre : refuse sans rien toucher si `mac` ou `auth` manquent, ou si l'adresse LAN visée (`192.168.0.1`) répond déjà ;
+sauvegarde `network`, `dhcp` et l'état des services dans `/root/backup-router` ; met en attente VLAN 832 + WAN (+ marquage 802.1p) + adresse
+LAN `192.168.0.1` (sans passerelle ni DNS statiques) + serveur DHCP ; applique avec le rollback de `rpcd` (300 s) ; active et redémarre
+`dnsmasq` et `firewall` ; et **ne confirme que si** l'interface `wan` a un bail IPv4, que `ping 1.1.1.1` passe et que le DNS résout, deux fois de
+suite. Sinon `rpcd` restaure la configuration et le script remet `dnsmasq` et `firewall` dans leur état d'avant. Elle se lance détachée de la session
+SSH (l'adresse LAN change). `to-router.uc restore` revient à l'état d'avant **après** une confirmation (ne remet pas les câbles).
+
+**Vérifié sur un Deco relié à votre vrai réseau (donc sans appliquer la conversion)** :
+`plan full=1` (opérations attendues), `check` (29 opérations réseau et 1 opération DHCP mises en attente, valides, puis annulées, aucun reliquat),
+`guard` (refuse bien quand `192.168.0.1` répond, laisse passer sur une adresse libre), `selftest` (vérifications de succès et état des services lus
+sans erreur), `restore` (refus sans sauvegarde ; avec une sauvegarde identique, fichiers inchangés), le générateur de jeton en mode `AUTH_ONLY=1` avec
+des identifiants factices, et — par le `dry-run` plus haut — l'application avec rollback du VLAN et du WAN.
+
+**Non vérifié, et ne peut pas l'être sans risque** : l'application de l'adresse LAN et du serveur DHCP (un serveur DHCP sur un Deco relié à votre
+réseau répondrait aux appareils de la maison), la confirmation automatique, l'activation des services, la restauration après échec, et tout ce qui
+concerne l'ONT et Orange.
+
+### Ce que le rollback ne couvre pas
+Les branchements physiques ; un Deco figé (le 29/10, un Deco s'est figé jusqu'à un redémarrage manuel) ; l'IPv6 (`wan6` non configuré, `odhcpd`
+non touché) ; le renouvellement du jeton (5 à 8 semaines d'après les sources communautaires) : `orange-gen-auth.sh` et `97-orange-config` du
+dossier modifient la configuration directement et n'ont pas été adaptés à ce flux ; les réservations DHCP et les adresses fixes de la Livebox.
+
+### Procédure et liste de contrôle (jour J)
+Avant :
+1. **Internet indépendant pour la session de travail** : Wi-Fi du Mac sur le partage de connexion du téléphone, et un adaptateur Ethernet vers un port LAN
+   du Deco (IP manuelle `192.168.0.10`, sans routeur). Sans cela, la session perd Internet pendant le test.
+2. Noter l'adresse MAC de la Livebox (étiquette), garder la Livebox à côté avec ses câbles. Fenêtre courte, quand personne n'a besoin d'Internet.
+3. Copier sur le Deco : `to-router.uc` (dans `/root/`), `orange-gen-auth.sh`, et créer `/etc/config/orange-auth` (identifiants Orange, **jamais commités**).
+4. Trancher la question du **mot de passe** : essayer d'abord avec une valeur bidon (le README ne peut pas affirmer qu'Orange la vérifie encore).
+5. `AUTH_ONLY=1 sh orange-gen-auth.sh` pour obtenir le jeton, puis `ucode /root/to-router.uc convert mac=AA:BB:.. auth=...` (sans `go=yes` : affiche le plan).
+
+Le jour :
+6. **Éteindre la Livebox** (ou débrancher son câble du Deco) : sinon `convert` refuse (`192.168.0.1` répond).
+7. `ucode /root/to-router.uc convert mac=.. auth=.. go=yes` : la conversion démarre en arrière-plan (300 s pour réussir).
+8. **Brancher le câble de l'ONT dans le port 3** du Deco dans la minute qui suit. Ne pas le brancher avant : le port 3 est encore dans le LAN.
+9. Suivre : `logread -e to-router` (ou `tail -f /root/to-router.log`) jusqu'à « CONFIRMÉ » ou « ANNULÉ ».
+10. Si « ANNULÉ » : débrancher l'ONT du Deco, remettre l'ONT sur la Livebox, la rallumer. Si on veut revenir plus tard : `to-router.uc restore`.
+
+### Écarts connus à valider en réel
+La priorité 802.1p sur le fil du port WAN, l'acceptation du jeton par Orange, l'IPv6, le décodeur TV et le téléphone fixe (non traités : pas dans ce foyer),
+et le fait que `192.168.0.1` convienne (appareils à adresse fixe, plage DHCP `100` à `249` à confirmer).
