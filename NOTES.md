@@ -459,6 +459,7 @@ Reconstruit (`./build-image.sh`, main à `6b7ea6896a3a83c9ae80d31e8d35d911e03226
 Sysupgrade : 7 864 608 octets, marge de 6,3 Mo sous la limite de 13 824 ko (luci, luci-ssl, plc-bcm, relayd et luci-proto-relay inclus).
 
 **Non vérifié :** rien de tout ça n'a tourné sur un vrai Deco. C'est la première image qui contient `relayd` de façon native plutôt qu'installé à la main ; l'incident ci-dessus montre que cette différence a un effet réel sur un sysupgrade, donc à surveiller particulièrement au premier flash de cette version.
+
 ## Deco 1 relié à la Livebox par câble (30/10/2026)
 
 Le Deco 1 a quitté la liaison Wi-Fi + `relayd` pour un câble Ethernet vers la Livebox : c'est un simple pont, comme le Deco 2. Script réversible : `tools/uplink-ethernet.sh` (`on`, `off`, `status`).
