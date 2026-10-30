@@ -475,7 +475,7 @@ Le Deco 1 a quitté la liaison Wi-Fi + `relayd` pour un câble Ethernet vers la 
 
 ## Remplacer la Livebox par un Deco P9 (recherche, 30/10/2026)
 
-**Jamais essayé sur l'installation réelle.** Instructions, gabarits de configuration et scripts dans
+**Essayé le 30/10/2026 sur la ligne réelle : le Deco a pris la place de la Livebox (adresse publique, Internet, DNS), avec le jeton de la Livebox rejoué ; voir `tools/orange-livebox-replacement/README.md` pour ce qui est vérifié, les défauts connus (confirmation automatique défaillante) et les mesures de débit (plafond d'environ 320 Mbit/s en filaire dû au processeur ; marquage 802.1p à ne pas appliquer à tout le trafic).** Instructions, gabarits de configuration et scripts dans
 `tools/orange-livebox-replacement/` (README détaillé là-bas). Résumé :
 
 - Orange authentifie le routeur comme une vraie Livebox (VLAN 832 + options DHCP spécifiques + un jeton

@@ -127,3 +127,49 @@ Le jour :
 ### Écarts connus à valider en réel
 La priorité 802.1p sur le fil du port WAN, l'acceptation du jeton par Orange, l'IPv6, le décodeur TV et le téléphone fixe (non traités : pas dans ce foyer),
 et le fait que `192.168.0.1` convienne (appareils à adresse fixe, plage DHCP `100` à `249` à confirmer).
+
+## Résultat du test réel et enseignements (30/10/2026)
+
+**La conversion a fonctionné sur une ligne Orange FTTH** : le Deco a pris la place de la Livebox et a obtenu l'adresse publique de celle-ci
+(`/21`, passerelle, DNS d'Orange, bail de 3 jours), avec Internet et DNS. Ce qu'il a fallu comprendre pour y arriver :
+
+1. **Un premier essai a échoué** (bail dans `172.16.0.0/16`, passerelle muette) avec un mot de passe bidon, le sel et l'octet du jeton
+   générés par `orange-gen-auth.sh`, un nom d'hôte, l'option 121, sans option 125 et avec l'adresse MAC du Deco. La cause n'a **pas été isolée** :
+   plusieurs choses ont changé à la fois avant le succès.
+2. **Capture de la vraie Livebox** : `to-router.uc tap go=yes` met le Deco en pont transparent du VLAN 832 entre l'ONT et la Livebox (le processeur en
+   tiers), puis `tcpdump` sur `eth0` (`vlan 832 and (udp port 67 or udp port 68)`) voit la requête DHCP de la Livebox, avec son **jeton réel** (option 90 : sel
+   de 16 caractères imprimables aléatoires, octet aléatoire, condensat), son option 125, pas de nom d'hôte, 12 options demandées sans la 121, priorité 802.1p 6.
+3. **Rejeu du jeton capturé** avec une requête alignée sur celle de la Livebox (y compris l'adresse MAC sur le fil, à régler dans la section `device`) :
+   **adresse publique obtenue**. Le mot de passe n'a pas été nécessaire : le jeton contient déjà son condensat. Le jeton **expirera** (5 à 8 semaines d'après
+   les sources communautaires, non vérifié) : il faudra le recapturer en remettant la Livebox derrière le Deco avec `tap`. Il est dans la configuration du Deco
+   (`network.wan.sendopts`) : toute sauvegarde de configuration est sensible.
+4. **La Livebox et le Deco ne peuvent pas être actifs ensemble** (même identité chez Orange) : éteindre la Livebox avant `convert`.
+
+**Défauts connus de `to-router.uc`**
+- **La confirmation automatique ne s'exécute pas jusqu'au bout** : le processus s'arrête après un ou deux passages de la boucle d'attente, sans erreur ni
+  signe de mémoire saturée (deux essais, cause non trouvée ; la boucle isolée tourne bien). Il faut donc **confirmer à la main** : `to-router.uc confirm`,
+  qui utilise la session mémorisée dans `/tmp/to-router.sid`. Sans confirmation, `rpcd` annule au bout du délai (300 s).
+- **Seule la session qui a appliqué peut annuler ou confirmer** (une autre session reçoit « Permission denied ») : `untap` ne marche donc que si la session
+  mémorisée existe ; sinon attendre l'expiration du délai.
+- Ne pas tester `dry-run` avec `wan_port` égal au port où est branché le poste de travail : il en est coupé le temps du délai (arrivé une fois).
+
+## Débit et marquage 802.1p : mesures (30/10/2026)
+
+**Le marquage de tout le trafic en priorité 6 bride l'émission.** Même chemin (`iperf3`, 4 flux, depuis le Deco vers un serveur public à Paris) :
+
+| Marquage | Réception | Émission |
+|---|---|---|
+| Tout en priorité 6 (mapping `0:6` sans règles) | 266 Mbit/s | **4,5 Mbit/s** |
+| Données en 0, contrôle (ICMP, IGMP, DHCP) en 6 | 271 Mbit/s | **218 Mbit/s** |
+
+`convert` installe donc, en plus du mapping `0:6 1:0 6:6` du périphérique, des règles `nft` (table `orange_prio`, service `orange-prio`) qui placent les données
+en priorité 1 (donc 0 sur le fil) et le contrôle en 6. Elles survivent à un rechargement du pare-feu (testé). **Non vérifié** : le comportement après un
+redémarrage complet, et que les règles soient reprises par un `sysupgrade` (le service n'est pas dans l'image).
+
+**Plafond d'environ 320 Mbit/s en filaire, dû au processeur du Deco** : depuis un NAS filaire, un flux HTTPS donne 321 Mbit/s avec le processeur du Deco à 0 %
+d'inactivité et 93 à 98 % de traitement d'interruptions. Quatre flux donnent 279 Mbit/s au total (processeur saturé aussi). Depuis le Wi-Fi d'un Mac (390 Mbit/s négociés),
+environ 200 Mbit/s en émission avec le processeur libre à environ 60 % : là, c'est le Wi-Fi. Aucune mesure ne montre un plafond côté Orange à ce niveau.
+
+**Pièges de mesure rencontrés** : `wget` de BusyBox est lent et en HTTPS il sature le processeur du Deco (il mesure le Deco, pas la ligne) ; utiliser `iperf3` ou un
+client externe. Un serveur public peut être mauvais en réception (23 à 35 Mbit/s sur l'un, 177 sur un autre depuis le même Mac). `proof.ovh.net` redirige HTTP vers
+HTTPS et ne sert qu'un flux de huit en parallèle. Des `wget` lancés en parallèle puis tués par `timeout` peuvent rester actifs : toujours les arrêter de force.

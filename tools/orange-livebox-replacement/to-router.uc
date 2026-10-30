@@ -10,6 +10,7 @@
 //   to-router.uc convert mac=.. auth=.. go=yes [clé=valeur ...]
 //                                                    conversion COMPLÈTE en routeur. Sans « go=yes » : affiche le plan et s'arrête.
 //   to-router.uc restore [reload=no]                 revient à la configuration d'avant « convert » (sauvegarde dans /root/backup-router)
+//   to-router.uc confirm | rollback-now             confirme / annule à la main le dernier « apply » (convert, tap), via la session mémorisée
 //   to-router.uc guard   [lan_ip=..]                 dit si « lan_ip » répond déjà (ce que convert vérifie avant de toucher à quoi que ce soit)
 //   to-router.uc selftest                            lit les vérifications de succès de convert (wan, ping, DNS) et l'état des services
 //   to-router.uc tap go=yes [ont_port=3 livebox_port=5 timeout=900]   VLAN 832 transparent ONT <-> Livebox (pour capturer ce que la Livebox envoie) ; untap l'annule
@@ -41,6 +42,45 @@ const USERCLASS77 = "2b46535644534c5f6c697665626f782e496e7465726e65742e736f66746
 // jeton factice (plan, check, dry-run) : sert seulement à voir le format de l'option sur le fil. Pas un vrai jeton Orange.
 const DUMMY_AUTH = "00:00:00:00:00:00:00:00:00:00:00:1a:09:00:00:05:58:01:03:41:01:0b:66:74:69:2f:74:65:73:74:65:75:72";
 const DUMMY_MAC = "02:00:00:00:00:00";
+// Priorité 802.1p sur le VLAN WAN. MESURÉ (iperf3, 4 flux) : avec TOUT le trafic en priorité 6 l'émission est bridée (4,5 Mbit/s) ;
+// avec les données en priorité 0 et seulement le contrôle (ICMP, IGMP, DHCP) en priorité 6, 218 Mbit/s. Le mapping du périphérique
+// (0:6 1:0 6:6) traduit la priorité 1 en 0 sur le fil ; ces règles mettent les données en 1 et le contrôle en 6.
+function prio_nft(eth) {
+	return `# Priorité 802.1p sur ${eth} (VLAN WAN d'Orange) : données en 0 sur le fil, contrôle (ICMP, IGMP, DHCP) en 6.
+# Sans ces règles, tout part en priorité 6 et l'émission est bridée vers 4 Mbit/s (mesuré).
+add table inet orange_prio
+delete table inet orange_prio
+table inet orange_prio {
+	chain post {
+		type filter hook postrouting priority mangle; policy accept;
+		oifname "${eth}" meta priority set 0:1
+		oifname "${eth}" meta l4proto { icmp, igmp, ipv6-icmp } meta priority set 0:6
+		oifname "${eth}" udp dport { 67, 547 } meta priority set 0:6
+	}
+}
+`;
+}
+const PRIO_INIT = `#!/bin/sh /etc/rc.common
+# Charge les règles de priorité 802.1p du VLAN WAN d'Orange (voir /etc/orange-prio.nft). Installé par to-router.uc.
+START=99
+USE_PROCD=0
+start() { nft -f /etc/orange-prio.nft; }
+stop() { nft delete table inet orange_prio 2>/dev/null; }
+restart() { stop; start; }
+`;
+function prio_install() {
+	fs.writefile("/etc/orange-prio.nft", prio_nft("eth0." + opts.vid));
+	fs.writefile("/etc/init.d/orange-prio", PRIO_INIT);
+	system("chmod +x /etc/init.d/orange-prio");
+	service("orange-prio", "enable");
+	service("orange-prio", "restart");
+}
+function prio_remove() {
+	service("orange-prio", "stop");
+	service("orange-prio", "disable");
+	system("rm -f /etc/orange-prio.nft /etc/init.d/orange-prio");
+}
+
 // option 125 (vendor-specific) envoyée par une vraie Livebox 4 (capturée le 30/10/2026) : entreprise 0x558, sous-option 2.
 // Contenu non compris ; reprise telle quelle pour que la requête ressemble à celle de la Livebox.
 const OPT125 = "000005580c020a1c0000ffffffffffffff";
@@ -168,6 +208,15 @@ function stage(sid, ops) {
 	}
 }
 
+// la session qui a lancé « apply » est la seule à pouvoir confirmer ou annuler : on la mémorise pour « confirm » et « untap »
+const SIDFILE = "/tmp/to-router.sid";
+function remember(sid) { fs.writefile(SIDFILE, sid); }
+function recall() {
+	let s = fs.readfile(SIDFILE);
+	if (!s) die("aucune session mémorisée (" + SIDFILE + ") : rien à confirmer ou annuler");
+	return trim(s);
+}
+
 function service_enabled(name) { return system([ "/etc/init.d/" + name, "enabled" ]) == 0; }
 function service(name, action) { return system([ "/etc/init.d/" + name, action ]); }
 
@@ -193,27 +242,38 @@ function convert_run() {
 	system("mkdir -p /root/backup-router && cp /etc/config/network /etc/config/dhcp /root/backup-router/");
 	fs.writefile("/root/backup-router/services", `dnsmasq=${dnsmasq_was ? 1 : 0}\nfirewall=${firewall_was ? 1 : 0}\n`);
 	let sid = open_session(timeout + 900);
+	remember(sid);
 	stage(sid, ops);
-	log("convert : modifications en attente, application avec rollback");
+	log("convert : modifications en attente, application avec rollback (session mémorisée : « to-router.uc confirm » peut confirmer)");
 	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
 	let t0 = time();
+	log("convert : apply retourné");
 
 	// services : non couverts par le rollback de rpcd
-	service("dnsmasq", "enable"); service("dnsmasq", "restart");
-	service("firewall", "enable"); service("firewall", "restart");
+	service("dnsmasq", "enable"); log("convert : dnsmasq enable fait");
+	service("dnsmasq", "restart"); log("convert : dnsmasq restart fait");
+	service("firewall", "enable"); log("convert : firewall enable fait");
+	service("firewall", "restart"); log("convert : firewall restart fait");
+	prio_install(); log("convert : règles de priorité 802.1p installées (service orange-prio)");
 
 	let good = 0, confirmed = false;
-	while (time() - t0 < timeout - 25) {
-		sleep(5000);
-		if (wan_ok() && net_ok()) {
-			if (++good >= 2) {
-				call("uci", "confirm", { ubus_rpc_session: sid });
-				confirmed = true;
-				log("convert : bail WAN, ping 1.1.1.1 et DNS OK deux fois de suite : CONFIRMÉ");
-				break;
-			}
-		} else
-			good = 0;
+	try {
+		while (time() - t0 < timeout - 25) {
+			sleep(5000);
+			let w = wan_ok(), n = w ? net_ok() : false;
+			log(`convert : t+${time() - t0} s wan_ok=${w} net_ok=${n}`);
+			if (w && n) {
+				if (++good >= 2) {
+					call("uci", "confirm", { ubus_rpc_session: sid });
+					confirmed = true;
+					log("convert : bail WAN, ping 1.1.1.1 et DNS OK deux fois de suite : CONFIRMÉ");
+					break;
+				}
+			} else
+				good = 0;
+		}
+	} catch (e) {
+		log("convert : EXCEPTION dans la boucle d'attente : " + e);
 	}
 	if (!confirmed) {
 		log("convert : WAN ou Internet KO dans le délai : pas de confirmation, rpcd va annuler la configuration");
@@ -221,6 +281,7 @@ function convert_run() {
 		// la configuration est restaurée : remettre les services dans leur état d'avant
 		if (!dnsmasq_was) { service("dnsmasq", "stop"); service("dnsmasq", "disable"); } else service("dnsmasq", "restart");
 		if (!firewall_was) { service("firewall", "stop"); service("firewall", "disable"); } else service("firewall", "restart");
+		prio_remove();
 		log("convert : ANNULÉ, services remis dans leur état d'avant ; remettre les câbles d'origine (Livebox sur l'ONT)");
 	}
 }
@@ -289,6 +350,7 @@ case "restore": {
 		if (was[s]) { service(s, "enable"); service(s, "restart"); }
 		else { service(s, "stop"); service(s, "disable"); }
 	}
+	prio_remove();
 	if (opts.reload != "no")
 		system("/etc/init.d/network reload");
 	log(`restore : configuration d'avant convert remise (dnsmasq=${was.dnsmasq}, firewall=${was.firewall}) ; remettre les câbles d'origine`);
@@ -302,8 +364,7 @@ case "untap": {
 	let ont = opts.ont_port || "3", lb = opts.livebox_port || "5";
 	let timeout = int(opts.timeout || "900");
 	if (cmd == "untap") {
-		let sid = open_session(60);
-		call("uci", "rollback", { ubus_rpc_session: sid });
+		call("uci", "rollback", { ubus_rpc_session: recall() });
 		log("tap : annulé à la demande (rollback)");
 		break;
 	}
@@ -324,11 +385,26 @@ case "untap": {
 		break;
 	}
 	let sid = open_session(timeout + 600);
+	remember(sid);
 	stage(sid, ops);
 	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
 	log(`tap : VLAN ${opts.vid} transparent entre les ports ${ont} et ${lb} ; annulation automatique dans ${timeout} s (untap pour annuler avant)`);
 	break;
 }
+
+case "confirm":
+	call("uci", "confirm", { ubus_rpc_session: recall() });
+	log("confirm : configuration CONFIRMÉE à la main");
+	break;
+
+case "rollback-now":
+	call("uci", "rollback", { ubus_rpc_session: recall() });
+	log("rollback-now : annulation demandée à la main");
+	break;
+
+case "show-prio":
+	print(prio_nft("eth0." + opts.vid));
+	break;
 
 case "guard":
 	print(opts.lan_ip, lan_ip_taken() ? " RÉPOND : convert refuserait (la Livebox est encore là)\n" : " ne répond pas : convert pourrait continuer\n");
@@ -355,5 +431,5 @@ case "diag": {
 }
 
 default:
-	die("commande attendue : plan | check | dry-run | convert | restore | tap | untap | guard | selftest | diag");
+	die("commande attendue : plan | check | dry-run | convert | restore | tap | untap | confirm | rollback-now | show-prio | guard | selftest | diag");
 }
