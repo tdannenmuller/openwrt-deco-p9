@@ -459,6 +459,18 @@ Reconstruit (`./build-image.sh`, main à `6b7ea6896a3a83c9ae80d31e8d35d911e03226
 Sysupgrade : 7 864 608 octets, marge de 6,3 Mo sous la limite de 13 824 ko (luci, luci-ssl, plc-bcm, relayd et luci-proto-relay inclus).
 
 **Non vérifié :** rien de tout ça n'a tourné sur un vrai Deco. C'est la première image qui contient `relayd` de façon native plutôt qu'installé à la main ; l'incident ci-dessus montre que cette différence a un effet réel sur un sysupgrade, donc à surveiller particulièrement au premier flash de cette version.
+## Deco 1 relié à la Livebox par câble (30/10/2026)
+
+Le Deco 1 a quitté la liaison Wi-Fi + `relayd` pour un câble Ethernet vers la Livebox : c'est un simple pont, comme le Deco 2. Script réversible : `tools/uplink-ethernet.sh` (`on`, `off`, `status`).
+
+- `on` désactive (sans supprimer) le client Wi-Fi, `wwan` et `relay_bridge`, arrête `relayd`, fixe la radio 5 GHz sur un canal sans DFS (36), sauvegarde dans `/root/backup-uplink`. **Lancer `on` avant de brancher le câble** : avec le Wi-Fi client et `relayd` encore actifs, le câble créerait deux chemins vers la Livebox (boucle). Non vérifié : ce qui se serait passé dans l'autre ordre.
+- Vérifié après bascule : lien du port 5 actif, `relayd` arrêté, pont sans interface Wi-Fi cliente, pas de tempête (processeur 90 % libre, ~11 paquets/s), Livebox à 0,5 ms, Deco 2 joignable par le CPL.
+- **Route par défaut manquante** après `network reload` (le noyau n'avait pas réinstallé celle de `lan`, que `netifd` listait) : `ifup lan` la rétablit, ajouté au script. Validé à la main, pas en relançant le script.
+- **Caches ARP périmés** : après la bascule, mon Mac gardait l'ancienne adresse MAC du relais (`1e:3b:f3:…`) pour `192.168.0.6` et ne joignait plus le Deco 2 pendant une vingtaine de minutes (le Deco 1 le joignait). D'autres appareils peuvent faire de même ; `sudo arp -d <ip>` le force.
+- Le script `/root/uplink-ethernet.sh` du Deco 1 a été vidé par erreur (0 octet) lors d'un renvoi mal rédigé, puis renvoyé à l'identique.
+- Latence du CPL (Deco 2 vers Livebox) : toujours irrégulière, 5,5 à 47,5 ms (moyenne 20 ms) ; cause non établie.
+
+**Maillage 802.11s 5 GHz** : avec cette radio libre sur le canal 36, il s'établit (146 / 140 Mbit/s, pont réel). Voir `tools/wifi-backhaul-test/README.md` pour le détail, y compris l'échec précédent sur le canal DFS 112 dont la cause reste ambiguë (canal et rôle de la radio ont changé en même temps).
 
 ## Liste de ce qui n'est PAS vérifié
 
@@ -473,3 +485,4 @@ Sysupgrade : 7 864 608 octets, marge de 6,3 Mo sous la limite de 13 824 ko (luci
 - La stabilité du pont relayd dans la durée, et le roaming entre la Livebox et le Deco.
 - La cause du figement d'un Deco au `network restart` par SSH, et le Wi-Fi du second Deco en bridge (voir « Second Deco en bridge simple »).
 - Le roaming 802.11k/r entre les deux Deco avec un vrai client (durée de coupure, appareils incompatibles FT-PSK), et 802.11v (indisponible avec `wpad-basic`).
+- La cause de l'échec du maillage 5 GHz sur le canal DFS 112 (DFS, ou radio portant aussi la liaison vers la Livebox), et la stabilité de tous ces liens dans la durée.

@@ -1,6 +1,6 @@
 # Essai : liaison Wi-Fi « pont » entre deux Deco P9 (WDS et 802.11s), sans relayd
 
-**Statut : WDS essayé le 29/10/2026 sur le 2,4 GHz puis sur le 5 GHz ; maillage 802.11s essayé sur le 5 GHz (échec) et sur le 2,4 GHz (réussi).** Voir « Résultats » en bas.
+**Statut : WDS essayé le 29/10/2026 sur le 2,4 GHz puis sur le 5 GHz ; maillage 802.11s : 2,4 GHz réussi, 5 GHz canal DFS 112 échec, 5 GHz canal 36 (sans DFS, radio libre) réussi.** Voir « Résultats » en bas.
 Les commandes `swap-mesh`, `swap-basic` et `mesh` n'ont pas été essayées. Le script modifié après la phase 1
 (règles `nft` et `ip rule`, variables `RADIO` et `CHAN`, redémarrage de `wpad` dans `swap-*`, retrait de `mesh_fwding`) a servi aux essais 5 GHz et maillage.
 
@@ -30,6 +30,9 @@ Vérifié (lecture seule) : les deux radios de chaque Deco (`ath10k` 5 GHz, `ath
   supprime tout et restaure le canal de la radio. Il tourne dans un processus du Deco ; il ne protège pas d'un figement.
 - Pendant l'essai, le Wi-Fi 2,4 GHz du Deco 2 passe sur le canal 1 (celui du Deco 1) puis revient au canal 11.
 - Pas de `network restart` : le script utilise `network reload` et `wifi reload radio1`.
+- **Nettoyage au démarrage** : `apply` ajoute une ligne `... stop # wdstest-cleanup` à `/etc/rc.local` (retirée par `stop`), pour que
+  la configuration de test, écrite sur la flash, disparaisse si le Deco est redémarré à la main ou plante. **Ajouté après l'incident du
+  5 GHz canal 48 ; jamais exécuté.** Le minuteur d'arrêt automatique, lui, ne survit pas à un redémarrage.
 
 ## Préparatifs déjà faits
 
@@ -141,3 +144,19 @@ Non essayé : un canal 5 GHz sans DFS (cela imposerait de déplacer la radio 5 G
 
 **À retenir** : pour une liaison 5 GHz en vrai pont entre deux Deco OpenWrt, **le WDS est la solution démontrée** ; le maillage 802.11s
 ne l'est que sur le 2,4 GHz. Les deux essais ont duré quelques minutes, Deco côte à côte, sans mesure de stabilité.
+
+## Maillage 802.11s sur le 5 GHz, canal 36 sans DFS (30/10/2026)
+
+Le Deco 1 était alors relié à la Livebox **par câble** (sa radio 5 GHz libre, plus de client Wi-Fi), les deux Deco sur le canal 36 (VHT80), `wpad-mesh-mbedtls`.
+
+**Le maillage 5 GHz fonctionne.**
+- Appairage : `mesh plink: ESTAB`, `MESH-PEER-CONNECTED` des deux côtés (−58 à −62 dBm), chemin d'un saut, métrique 137 (celle du 2,4 GHz était 10241 ; plus bas = meilleur).
+- `probe` : l'adresse MAC étrangère `02:77:00:00:00:02` est apprise par le Deco 1 : pont réel. Les premiers paquets ont eu une latence très élevée (2076, 1076 puis 76 ms, 2 pertes sur 5) : probablement la découverte du chemin par le maillage (non vérifié) ; ensuite 19 réponses sur 20 (2,2 à 21 ms, moyenne 4,6 ms).
+- **Débit (iperf3, TCP, un flux, 10 s) : 146 Mbit/s (Deco 2 vers Deco 1, 264 retransmissions) et 140 Mbit/s (sens inverse, 0 retransmission).**
+  Débit négocié 195 / 175 Mbit/s (`VHT-MCS 4`, un flux spatial dans un sens), débit attendu par le pilote 170 Mbit/s.
+
+**Comparaison avec le WDS 5 GHz (196 Mbit/s) : prudence.** Les conditions diffèrent (canal 112 puis 36, signal −53 puis −58 à −60 dBm, un essai chacun) : on ne peut pas attribuer l'écart au protocole. Le maillage est dans le même ordre de grandeur, un peu en dessous.
+
+**Cause de l'échec sur le canal 112 : toujours non établie.** Entre les deux essais, **deux choses ont changé en même temps** : le canal (DFS 112 puis non-DFS 36) et le rôle de la radio (elle portait la liaison Wi-Fi vers la Livebox, puis plus). Le DFS est une hypothèse raisonnable, pas démontrée. À retenir : le maillage s'établit quand la radio est libre, sur un canal sans DFS.
+
+**Essai instable le 29/10 avec la radio chargée (liaison Wi-Fi vers la Livebox + point d'accès + maillage sur le canal 48, sans DFS)** : le Deco 1 est devenu injoignable par intermittence puis complètement, jusqu'à un redémarrage manuel ; aucun journal conservé. Mise en garde : un nœud qui se relie à la Livebox par le Wi-Fi ne doit probablement pas aussi porter un maillage 5 GHz (hypothèse).

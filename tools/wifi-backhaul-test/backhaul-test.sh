@@ -68,6 +68,11 @@ apply() {
 	ip rule del to 10.77.0.0/24 lookup main pref 1 2>/dev/null
 	ip rule add to 10.77.0.0/24 lookup main pref 1 2>/dev/null
 	uci commit wireless
+	# Filet de sécurité : la config de test est écrite sur la flash et le minuteur « stop » ne survit pas à un
+	# redémarrage ; si le Deco plante ou est redémarré à la main, l'essai est supprimé au démarrage suivant.
+	if [ -f /etc/rc.local ] && ! grep -q wdstest-cleanup /etc/rc.local; then
+		sed -i '/^exit 0/i [ -x /root/backhaul-test.sh ] \&\& /root/backhaul-test.sh stop # wdstest-cleanup' /etc/rc.local
+	fi
 	/etc/init.d/network reload
 	wifi reload "$RADIO"
 	if [ "$AUTOSTOP" != 0 ]; then
@@ -145,6 +150,7 @@ swap-mesh|swap-basic)
 	apk info | grep -E '^wpad'
 	;;
 stop)
+	[ -f /etc/rc.local ] && sed -i '/wdstest-cleanup/d' /etc/rc.local
 	ip rule del to 10.77.0.0/24 lookup main pref 1 2>/dev/null
 	for h in $(nft -a list chain inet fw4 input 2>/dev/null | sed -n 's/.*comment "wdstest" # handle \([0-9]*\)/\1/p'); do
 		nft delete rule inet fw4 input handle "$h"
