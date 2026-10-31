@@ -3,7 +3,7 @@
 Ce dépôt contient trois patchs `git am` pour OpenWrt (base `6b7ea6896a3a83c9ae80d31e8d35d911e032268f`) :
 `0001` outil de signature, `0002` support du TP-Link Deco P9, `0003` paquet `plc-bcm` (CPL) et port 2 dans le LAN.
 **Ta mission : construire le firmware avec les trois patchs, le vérifier, et rapporter honnêtement.**
-Lis d'abord `NOTES.md` : sections « CPL » et « Paquet OpenWrt `plc-bcm` ».
+Lis d'abord `docs/status.md` et `docs/powerline.md` (CPL et paquet `plc-bcm`).
 
 ## Ce qui est vérifié, ce qui ne l'est pas
 
@@ -16,11 +16,11 @@ Lis d'abord `NOTES.md` : sections « CPL » et « Paquet OpenWrt `plc-bcm` ».
 ```sh
 ./build-image.sh        # clone OpenWrt, applique les patchs, configure, compile, lance check-image.sh
 ```
-Machine Linux avec la toolchain OpenWrt (paquets listés dans `NOTES.md`, « Construire »). Variables : `WORK` (dossier de travail), `PUBLISH=1` (copie aussi dans `images/` et régénère `SHA256SUMS`, seulement après vérification). Le premier build est long. Le résultat est copié dans `out/` (ignoré par git).
+Machine Linux avec la toolchain OpenWrt (paquets listés dans `docs/build.md`). Variables : `WORK` (dossier de travail), `PUBLISH=1` (copie aussi dans `images/` et régénère `SHA256SUMS`, seulement après vérification). Le premier build est long. Le résultat est copié dans `out/` (ignoré par git).
 
 `check-image.sh` vérifie : paquet construit, images présentes, taille du sysupgrade ≤ 13824k, `product_name:P9`, manifeste (plc-bcm, ucode-mod-socket, -uci, -fs, relayd, luci-proto-relay), contenu du rootfs (`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, lien `/etc/rc.d/S99plc`, `/usr/sbin/relayd` et son lien `S*relayd`, `/etc/config/plc` avec la NMK par défaut, modules `ucode`), et `02_network` avec le port 2. Il n'écrit rien.
 
-Fais aussi les contrôles manuels de `NOTES.md` (« Vérifier l'image ») : comparaison d'en-têtes avec une image M4R officielle, magic `hsqs`.
+Fais aussi les contrôles manuels de `docs/build.md` (« Verify the image ») : comparaison d'en-têtes avec une image M4R officielle, magic `hsqs`.
 
 ## Points de rupture probables (à regarder en premier si ça échoue)
 
@@ -53,7 +53,7 @@ Ne contourne jamais une erreur en modifiant `check-image.sh` pour qu'il passe.
 2. Le `sha256` des fichiers de `out/` et le commit OpenWrt utilisé.
 3. Ce que tu as corrigé (et le nouveau patch 0003 s'il a changé), ce qui reste cassé.
 4. Les vérifications **à faire sur le matériel** (tu ne peux pas les faire) :
-   - flash par la méthode TFTP de `NOTES.md` ;
+   - flash par la méthode TFTP de `docs/install.md` ;
    - sur le Deco : `ls /etc/rc.d | grep plc`, `logread | grep plc:` (attendu : `NMK écrite et relue` ou `NMK déjà à jour`), `uci show plc`, `swconfig dev switch0 vlan 1 show` (port 2 présent sans réglage manuel) ;
    - deux Deco neufs : ping de l'un à l'autre par le CPL ;
    - **changer la NMK par défaut** : `uci set plc.main.nmk='<32 hex>'; uci commit plc; /etc/init.d/plc restart`.

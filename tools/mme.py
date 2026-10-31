@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parle à la puce CPL Broadcom du TP-Link Deco P9 (ethertype 0x8912).
 
-Protocole déduit du désassemblage de libplcapi.so (voir NOTES.md, section CPL).
+Protocole déduit du désassemblage de libplcapi.so (voir docs/powerline.md).
 À lancer en root sur le Deco, par exemple avec Python installé en RAM.
 
     mme.py get-nmk
@@ -79,7 +79,7 @@ class Plc:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-i", dest="ifname", default="eth0.1")
-    ap.add_argument("-d", dest="dst", help="MAC de la puce, ex. 1c:3b:f3:16:d2:cd")
+    ap.add_argument("-d", dest="dst", help="MAC de la puce, ex. aa:bb:cc:dd:ee:05")
     ap.add_argument("cmd", choices=["get-nmk", "set-nmk", "pushbutton", "raw"])
     ap.add_argument("args", nargs="*")
     a = ap.parse_args()

@@ -1,195 +1,139 @@
-# Remplacer une Livebox Orange (fibre) par un Deco P9
+# Replacing an Orange (France) Livebox with an OpenWrt router (FTTH)
 
-**Statut : jamais essayé sur l'installation réelle. Tout ce qui suit vient de recherches et de dépôts
-communautaires (liens ci-dessous), adaptés à notre matériel (commutateur `swconfig`, pas `DSA`), pas d'un
-test sur une vraie ligne Orange.** Le Deco 1 a déjà un câble Ethernet vers la Livebox (voir `NOTES.md`,
-« Deco 1 relié à la Livebox par câble ») ; c'est ce même port qui devrait passer de la Livebox à l'ONT.
+Worked example on a TP-Link Deco P9 (`swconfig` switch, not `DSA`). The approach should carry over to other OpenWrt routers, but the switch/VLAN steps will differ.
 
-## Pourquoi ce n'est pas juste un câble et du DHCP
+**Status: experimental, tested on one line. Read "Known defects" first.**
+The conversion worked once on a real Orange FTTH line (Oct 2026). Nothing here is vendor-supported, and most of it is not verified beyond that single test. Each section says what was verified and what was not.
 
-Orange authentifie le routeur comme une vraie Livebox, pas seulement par VLAN. Sans ça, le DHCP
-n'aboutit pas, silencieusement (pas de message d'erreur, juste pas de bail).
+## Legal / ToS note
 
-## Ce qu'il faut, dans l'ordre
+Use only your own credentials, with your own Orange subscription, on your own equipment. Do not use anyone else's credentials or line identity. Check Orange's current terms of service. You are responsible for how you use these scripts.
 
-1. **Un port WAN dédié.** Notre configuration actuelle met les deux ports Ethernet du P9 en LAN. Il faut
-   en retirer un (3 ou 5) pour en faire un port WAN, tagué sur un nouveau VLAN, dans **Réseau > Commutateur**
-   (page `swconfig`, pas l'écran DSA d'un routeur plus récent) :
-   - Retirer le port choisi du VLAN 1 (le LAN existant).
-   - Créer le VLAN **832** avec le port CPU et ce port tous les deux **tagués** (`t`) : les trames de l'ONT
-     arrivent déjà étiquetées, le port CPU doit l'être aussi pour que `eth0.832` apparaisse côté Linux.
+## Why this is not just a cable and DHCP
 
-2. **L'interface WAN**, avec les options DHCP qui imitent une Livebox. Gabarit : `network-wan-snippet.txt`
-   dans ce dossier. Remplacer :
-   - `11:22:33:AA:BB:CC` par l'adresse MAC **de la vraie Livebox** qu'on remplace (étiquette dessous, ou
-     son interface d'administration). Le client DHCP doit se présenter avec cette MAC (option 61/`clientid`),
-     pas celle du Deco : Orange authentifie via l'option 90, pas l'adresse de couche 2 (voir `orange-gen-auth.sh`).
-   - `Livebox4` dans `userclass` (option 77) par le modèle réel si ce n'est pas une Livebox 4
-     (`Livebox3`, `Livebox5`, `Livebox6`…) : seul le dernier caractère hexadécimal change (`33` → `34` pour
-     passer de 3 à 4, etc.), le reste de la chaîne est fixe.
+Orange authenticates the router as a real Livebox, not only by VLAN. Without that, DHCP silently fails (no error message, just no lease).
 
-3. **Le jeton d'authentification (option 90 IPv4, option 11 IPv6).** Calculé par `orange-gen-auth.sh` à
-   partir des identifiants du compte Orange (espace client, pas le Wi-Fi), stockés dans `orange-auth`
-   **jamais commité avec de vraies valeurs**. Expire au bout de 5 à 8 semaines d'après les sources
-   communautaires : `orange-auth-init.sh` (démarrage) et `97-orange-config` (hotplug sur coupure WAN)
-   le régénèrent automatiquement. `99-wan6-delay` retarde `wan6` le temps que `wan` obtienne son bail.
+## What you need, in order
 
-4. **Le point non résolu : la priorité réseau (802.1p/PCP).** Les sources trouvées (routeurs à interface
-   `8021q` gérée par le noyau, pas `swconfig`) disent qu'Orange bride l'émission à environ 6 Mbit/s si les
-   trames DHCP ne sortent pas marquées en priorité 6. Une fonctionnalité de marquage par port existe pour
-   la puce `ar8327/ar8337` de notre commutateur, mais sans confirmation qu'elle est présente dans cette
-   version d'OpenWrt ni de syntaxe UCI vérifiée. **Ne rien inventer ici** : brancher d'abord sans ce
-   réglage, mesurer le débit montant, et creuser seulement si besoin.
+1. **A dedicated WAN port.** If all Ethernet ports are in the LAN, remove one (port 3 or 5 on the P9) and make it a WAN port tagged on a new VLAN, under **Network > Switch** (the `swconfig` page, not the DSA screen of a newer router):
+   - Remove the chosen port from VLAN 1 (the existing LAN).
+   - Create VLAN **832** with the CPU port and this port both **tagged** (`t`). Frames from the ONT already arrive tagged, and the CPU port must be tagged too so that `eth0.832` appears on the Linux side.
 
-## Avant de débrancher la Livebox
+2. **The WAN interface**, with DHCP options that mimic a Livebox. Template: `network-wan-snippet.txt` in this folder. Replace:
+   - `11:22:33:AA:BB:CC` with the MAC address **of the real Livebox** you are replacing (label underneath it, or its admin interface). Written `<livebox-mac>` below. The DHCP client must present itself with this MAC (option 61/`clientid`), not the router's own. Orange authenticates through option 90, not the layer 2 address (see `orange-gen-auth.sh`).
+   - `Livebox4` in `userclass` (option 77) with your actual model if it is not a Livebox 4 (`Livebox3`, `Livebox5`, `Livebox6`...). Only the last hex character changes (`33` to `34` to go from 3 to 4, etc.); the rest of the string is fixed.
 
-- Garder la Livebox de côté, câble prêt à la rebrancher : en cas d'échec de l'authentification ou de
-  VLAN refusé, rien n'est endommagé, mais la connexion s'arrête.
-- Ce test concerne uniquement internet. Pas de décodeur TV Orange ni de ligne téléphonique fixe
-  dans ce foyer : non traité ici, et probablement pas transposable sans travail supplémentaire
-  (VLAN et `igmpproxy` pour la TV, matériel propre à la Livebox pour le téléphone).
+3. **The authentication token (option 90 for IPv4, option 11 for IPv6).** `orange-gen-auth.sh` computes it from your Orange account credentials (customer area, not Wi-Fi), stored in `orange-auth`. Example identifier format: `fti/<login>`. **Never commit real values.** According to community sources the token expires after 5 to 8 weeks. `orange-auth-init.sh` (at boot) and `97-orange-config` (hotplug on WAN loss) regenerate it automatically; these scripts and the config file were not exercised in the real test (see "What the rollback does not cover"). `99-wan6-delay` delays `wan6` until `wan` has its lease.
 
-## Ce qui n'est PAS vérifié
+4. **Network priority (802.1p/PCP).** Community sources (routers using the kernel-managed `8021q` interface, not `swconfig`) say Orange throttles upload to about 6 Mbit/s if DHCP frames are not sent with priority 6. See "Throughput and 802.1p marking" below for what was measured. Do not invent a syntax: if in doubt, plug in, measure upstream throughput, and dig only if needed.
 
-- Tout. Aucun branchement réel à l'ONT n'a eu lieu.
-- Que `swconfig` sur ce commutateur a un équivalent du marquage PCP par port utilisé par les
-  guides basés sur un périphérique `8021q` noyau (voir point 4).
-- Qu'une Livebox 4 n'a pas d'autre différence que la chaîne `userclass` par rapport à une Livebox 3.
-- Le calcul réel du jeton d'authentification avec de vrais identifiants Orange.
-- Que l'adresse MAC clonée suffit, sans avoir besoin de notifier Orange du changement de matériel.
+## Before unplugging the Livebox
 
-## Sources (communautaires, pas de documentation Orange officielle)
+- Keep the Livebox aside, cable ready to plug back in. If authentication fails or the VLAN is refused, nothing is damaged, but the connection is down.
+- This only covers internet access. Orange TV set-top boxes and the landline phone are not covered, and probably not transposable without extra work (VLAN and `igmpproxy` for TV, Livebox-specific hardware for the phone).
 
-- https://github.com/golfromeo-fr/openwrt-turris-omnia-orange-france — référence principale pour le DHCP,
-  le VLAN 832 et le marquage PCP (sur un routeur à périphérique `8021q`, pas `swconfig`).
+## Sources (community, no official Orange documentation)
+
+- https://github.com/golfromeo-fr/openwrt-turris-omnia-orange-france : main reference for DHCP, VLAN 832 and PCP marking (on a router with an `8021q` device, not `swconfig`).
 - https://lig-membres.imag.fr/rousseau/tech/2021/02/28/fibre-orange-avec-routeur-er-x.html
 - https://www.lafois.com/2021/10/09/replacing-orange-livebox-by-an-edgerouter-with-ftth/
 - https://vincent.bernat.ch/en/blog/2019-orange-livebox-linux
 - https://wiki.csnu.org/index.php/Fibre_orange_en_DHCP_avec_routeur_pfsense
 
-## Essai à blanc sur un Deco sans ONT (30/10/2026)
+## Dry run on a device without an ONT
 
-`to-router.uc` (sur le Deco 2, avec annulation automatique) a appliqué **seulement** le VLAN 832 du commutateur et l'interface `wan`,
-puis tout été annulé seul au bout du délai. Ce qui est **vérifié**, sans ONT ni câble :
-- `swconfig` crée bien le périphérique **`eth0.832`** (VID 832) quand on ajoute `config switch_vlan` avec `vlan '2'`, `vid '832'`, `ports '0t 3t'` ;
-- le client DHCP envoie sur ce VLAN un DISCOVER avec `Hostname livebox`, `Vendor-Class sagem`, `Client-ID ether <MAC>`, `User-Class
-  FSVDSL_livebox.Internet.softathome.Livebox4` et l'option 90 (donc `vendorid` + `clientid` + `sendopts 77` et `90` suffisent) ;
-- **priorité 802.1p** : avec une section `device` complète (`type '8021q'`, `ifname`, `vid`, `egress_qos_mapping`), les trames sortent en
-  `vlan 832, p 6` et `/proc/net/vlan/eth0.832` affiche `EGRESS priority mappings: 0:6 1:0 6:6`. Sans `type/ifname/vid`, la section est
-  ignorée (`p 0`). **Non vérifié** : que la puce `ar8327` conserve cette priorité sur le fil du port WAN (il faudrait une capture de
-  l'autre côté du câble), et qu'Orange en tienne compte ;
-- l'annulation automatique restaure bien tout (VLAN 1 à `2 3 5 0t`, plus d'`eth0.832`, plus d'interface `wan`).
+`to-router.uc` (with automatic rollback) applied **only** the VLAN 832 switch config and the `wan` interface, then everything was rolled back by itself after the timeout. **Verified**, with no ONT and no cable:
+- `swconfig` does create the **`eth0.832`** device (VID 832) when adding a `config switch_vlan` with `vlan '2'`, `vid '832'`, `ports '0t 3t'`.
+- The DHCP client sends a DISCOVER on this VLAN with `Hostname livebox`, `Vendor-Class sagem`, `Client-ID ether <MAC>`, `User-Class FSVDSL_livebox.Internet.softathome.Livebox4` and option 90 (so `vendorid` + `clientid` + `sendopts` 77 and 90 are enough).
+- **802.1p priority**: with a complete `device` section (`type '8021q'`, `ifname`, `vid`, `egress_qos_mapping`), frames leave as `vlan 832, p 6` and `/proc/net/vlan/eth0.832` shows `EGRESS priority mappings: 0:6 1:0 6:6`. Without `type/ifname/vid` the section is ignored (`p 0`). **Not verified at that stage**: that the `ar8327` chip keeps this priority on the wire at the WAN port (this needs a capture on the other side of the cable), and that Orange honours it.
+- The automatic rollback restores everything (VLAN 1 back to `2 3 5 0t`, no more `eth0.832`, no more `wan` interface).
 
-**Erreurs trouvées dans le gabarit d'origine** (corrigées dans `network-wan-snippet.txt`) : `vendorclass` et `userclass` n'existent pas dans
-le client DHCP d'OpenWrt ; `sendopts` 12, 60 et 61 faisaient doublon ; sans `defaultreqopts '0'`, `netifd` ajoute les options 12 et 42 à la liste
-demandée. Le `clientid` DHCPv6 est à remplacer aussi (voir le gabarit). Le `/etc/config/orange-auth` et les scripts de jeton n'ont pas été exécutés.
+**Errors found in the original template** (fixed in `network-wan-snippet.txt`): `vendorclass` and `userclass` do not exist in OpenWrt's DHCP client; `sendopts` 12, 60 and 61 were redundant; without `defaultreqopts '0'`, `netifd` adds options 12 and 42 to the requested list. The DHCPv6 `clientid` must also be replaced (see the template). `/etc/config/orange-auth` and the token scripts were not executed in this dry run.
 
-## Conversion complète en routeur : `to-router.uc convert` (écrite le 30/10/2026, **jamais exécutée de bout en bout**)
+## Full conversion to a router: `to-router.uc convert` (written Oct 2026)
 
-Ce qu'elle fait, dans l'ordre : refuse sans rien toucher si `mac` ou `auth` manquent, ou si l'adresse LAN visée (`192.168.0.1`) répond déjà ;
-sauvegarde `network`, `dhcp` et l'état des services dans `/root/backup-router` ; met en attente VLAN 832 + WAN (+ marquage 802.1p) + adresse
-LAN `192.168.0.1` (sans passerelle ni DNS statiques) + serveur DHCP ; applique avec le rollback de `rpcd` (300 s) ; active et redémarre
-`dnsmasq` et `firewall` ; et **ne confirme que si** l'interface `wan` a un bail IPv4, que `ping 1.1.1.1` passe et que le DNS résout, deux fois de
-suite. Sinon `rpcd` restaure la configuration et le script remet `dnsmasq` et `firewall` dans leur état d'avant. Elle se lance détachée de la session
-SSH (l'adresse LAN change). `to-router.uc restore` revient à l'état d'avant **après** une confirmation (ne remet pas les câbles).
+What it does, in order:
+- Refuses without touching anything if `mac` or `auth` is missing, or if the target LAN address (`192.168.0.1`) already answers.
+- Backs up `network`, `dhcp` and the service state to `/root/backup-router`.
+- Stages VLAN 832 + WAN (+ 802.1p marking) + LAN address `192.168.0.1` (no static gateway or DNS) + DHCP server.
+- Applies with `rpcd`'s rollback (300 s), then enables and restarts `dnsmasq` and `firewall`.
+- **Confirms only if** the `wan` interface has an IPv4 lease, `ping 1.1.1.1` works and DNS resolves, twice in a row. Otherwise `rpcd` restores the configuration and the script puts `dnsmasq` and `firewall` back in their previous state.
+- Runs detached from the SSH session (the LAN address changes).
+- `to-router.uc restore` goes back to the previous state **after** a confirmation (it does not move cables back).
 
-**Vérifié sur un Deco relié à votre vrai réseau (donc sans appliquer la conversion)** :
-`plan full=1` (opérations attendues), `check` (29 opérations réseau et 1 opération DHCP mises en attente, valides, puis annulées, aucun reliquat),
-`guard` (refuse bien quand `192.168.0.1` répond, laisse passer sur une adresse libre), `selftest` (vérifications de succès et état des services lus
-sans erreur), `restore` (refus sans sauvegarde ; avec une sauvegarde identique, fichiers inchangés), le générateur de jeton en mode `AUTH_ONLY=1` avec
-des identifiants factices, et — par le `dry-run` plus haut — l'application avec rollback du VLAN et du WAN.
+**Verified on a device connected to a real existing network (without applying the conversion)**: `plan full=1` (expected operations), `check` (29 network operations and 1 DHCP operation staged, valid, then cancelled, nothing left over), `guard` (refuses when `192.168.0.1` answers, passes on a free address), `selftest` (success checks and service state read without error), `restore` (refuses without a backup; with an identical backup, files unchanged), the token generator in `AUTH_ONLY=1` mode with dummy credentials, and, via the dry run above, applying the VLAN and WAN with rollback.
 
-**Non vérifié, et ne peut pas l'être sans risque** : l'application de l'adresse LAN et du serveur DHCP (un serveur DHCP sur un Deco relié à votre
-réseau répondrait aux appareils de la maison), la confirmation automatique, l'activation des services, la restauration après échec, et tout ce qui
-concerne l'ONT et Orange.
+**Not verified in that setup, and cannot be without risk**: applying the LAN address and DHCP server (a DHCP server on a device plugged into an existing network would answer other devices there), the automatic confirmation, service activation, restore after failure, and anything involving the ONT and Orange.
 
-### Ce que le rollback ne couvre pas
-Les branchements physiques ; un Deco figé (le 29/10, un Deco s'est figé jusqu'à un redémarrage manuel) ; l'IPv6 (`wan6` non configuré, `odhcpd`
-non touché) ; le renouvellement du jeton (5 à 8 semaines d'après les sources communautaires) : `orange-gen-auth.sh` et `97-orange-config` du
-dossier modifient la configuration directement et n'ont pas été adaptés à ce flux ; les réservations DHCP et les adresses fixes de la Livebox.
+### What the rollback does not cover
 
-### Procédure et liste de contrôle (jour J)
-Avant :
-1. **Internet indépendant pour la session de travail** : Wi-Fi du Mac sur le partage de connexion du téléphone, et un adaptateur Ethernet vers un port LAN
-   du Deco (IP manuelle `192.168.0.10`, sans routeur). Sans cela, la session perd Internet pendant le test.
-2. Noter l'adresse MAC de la Livebox (étiquette), garder la Livebox à côté avec ses câbles. Fenêtre courte, quand personne n'a besoin d'Internet.
-3. Copier sur le Deco : `to-router.uc` (dans `/root/`), `orange-gen-auth.sh`, et créer `/etc/config/orange-auth` (identifiants Orange, **jamais commités**).
-4. Trancher la question du **mot de passe** : essayer d'abord avec une valeur bidon (le README ne peut pas affirmer qu'Orange la vérifie encore).
-5. `AUTH_ONLY=1 sh orange-gen-auth.sh` pour obtenir le jeton, puis `ucode /root/to-router.uc convert mac=AA:BB:.. auth=...` (sans `go=yes` : affiche le plan).
+- Physical cabling.
+- A frozen device (one device froze until a manual reboot during testing).
+- IPv6 (`wan6` not configured, `odhcpd` untouched).
+- Token renewal (5 to 8 weeks according to community sources): `orange-gen-auth.sh` and `97-orange-config` in this folder edit the configuration directly and were not adapted to this flow. Token renewal is untested.
+- DHCP reservations and static addresses that lived on the Livebox.
 
-Le jour :
-6. **Éteindre la Livebox** (ou débrancher son câble du Deco) : sinon `convert` refuse (`192.168.0.1` répond).
-7. `ucode /root/to-router.uc convert mac=.. auth=.. go=yes` : la conversion démarre en arrière-plan (300 s pour réussir).
-8. **Brancher le câble de l'ONT dans le port 3** du Deco dans la minute qui suit. Ne pas le brancher avant : le port 3 est encore dans le LAN.
-9. Suivre : `logread -e to-router` (ou `tail -f /root/to-router.log`) jusqu'à « CONFIRMÉ » ou « ANNULÉ ».
-10. Si « ANNULÉ » : débrancher l'ONT du Deco, remettre l'ONT sur la Livebox, la rallumer. Si on veut revenir plus tard : `to-router.uc restore`.
+### Procedure and checklist (D-day)
 
-### Écarts connus à valider en réel
-La priorité 802.1p sur le fil du port WAN, l'acceptation du jeton par Orange, l'IPv6, le décodeur TV et le téléphone fixe (non traités : pas dans ce foyer),
-et le fait que `192.168.0.1` convienne (appareils à adresse fixe, plage DHCP `100` à `249` à confirmer).
+Before:
+1. **Independent internet for your working session**: for example a laptop on a phone hotspot over Wi-Fi, plus an Ethernet adapter to a LAN port of the router (manual IP `192.168.0.10`, no gateway). Without this, your session loses internet during the test.
+2. Note the Livebox MAC address (label) as `<livebox-mac>`, and keep the Livebox next to you with its cables. Pick a short window when nobody needs internet.
+3. Copy to the router: `to-router.uc` (in `/root/`), `orange-gen-auth.sh`, and create `/etc/config/orange-auth` (Orange credentials, **never committed**).
+4. Decide about the **password**: try first with a dummy value (this README cannot claim that Orange still checks it; see the test results below).
+5. `AUTH_ONLY=1 sh orange-gen-auth.sh` to get the token, then `ucode /root/to-router.uc convert mac=<livebox-mac> auth=<token>` (without `go=yes`: prints the plan).
 
-## Résultat du test réel et enseignements (30/10/2026)
+On the day:
+6. **Switch off the Livebox** (or unplug its cable from the router). Otherwise `convert` refuses (`192.168.0.1` answers).
+7. `ucode /root/to-router.uc convert mac=<livebox-mac> auth=<token> go=yes`: the conversion starts in the background (300 s to succeed).
+8. **Plug the ONT cable into port 3** of the router within the next minute. Do not plug it in earlier: port 3 is still in the LAN.
+9. Follow with `logread -e to-router` (or `tail -f /root/to-router.log`) until you see the confirmed or cancelled message.
+10. If cancelled: unplug the ONT from the router, plug the ONT back into the Livebox and power it on. To go back later: `to-router.uc restore`.
 
-**La conversion a fonctionné sur une ligne Orange FTTH** : le Deco a pris la place de la Livebox et a obtenu l'adresse publique de celle-ci
-(`/21`, passerelle, DNS d'Orange, bail de 3 jours), avec Internet et DNS. Ce qu'il a fallu comprendre pour y arriver :
+### Known gaps to validate on a real line
 
-1. **Un premier essai a échoué** (bail dans `172.16.0.0/16`, passerelle muette) avec un mot de passe bidon, le sel et l'octet du jeton
-   générés par `orange-gen-auth.sh`, un nom d'hôte, l'option 121, sans option 125 et avec l'adresse MAC du Deco. La cause n'a **pas été isolée** :
-   plusieurs choses ont changé à la fois avant le succès.
-2. **Capture de la vraie Livebox** : `to-router.uc tap go=yes` met le Deco en pont transparent du VLAN 832 entre l'ONT et la Livebox (le processeur en
-   tiers), puis `tcpdump` sur `eth0` (`vlan 832 and (udp port 67 or udp port 68)`) voit la requête DHCP de la Livebox, avec son **jeton réel** (option 90 : sel
-   de 16 caractères imprimables aléatoires, octet aléatoire, condensat), son option 125, pas de nom d'hôte, 12 options demandées sans la 121, priorité 802.1p 6.
-3. **Rejeu du jeton capturé** avec une requête alignée sur celle de la Livebox (y compris l'adresse MAC sur le fil, à régler dans la section `device`) :
-   **adresse publique obtenue**. Le mot de passe n'a pas été nécessaire : le jeton contient déjà son condensat. Le jeton **expirera** (5 à 8 semaines d'après
-   les sources communautaires, non vérifié) : il faudra le recapturer en remettant la Livebox derrière le Deco avec `tap`. Il est dans la configuration du Deco
-   (`network.wan.sendopts`) : toute sauvegarde de configuration est sensible.
-4. **La Livebox et le Deco ne peuvent pas être actifs ensemble** (même identité chez Orange) : éteindre la Livebox avant `convert`.
+802.1p priority on the wire at the WAN port, Orange's acceptance of the token, IPv6, TV set-top box and landline phone (not covered), and whether `192.168.0.1` suits your network (devices with static addresses; DHCP range `100` to `249` to be confirmed).
 
-**Défauts connus de `to-router.uc`**
-- **La confirmation automatique ne s'exécute pas jusqu'au bout** : le processus s'arrête après un ou deux passages de la boucle d'attente, sans erreur ni
-  signe de mémoire saturée (deux essais, cause non trouvée ; la boucle isolée tourne bien). Il faut donc **confirmer à la main** : `to-router.uc confirm`,
-  qui utilise la session mémorisée dans `/tmp/to-router.sid`. Sans confirmation, `rpcd` annule au bout du délai (300 s).
-- **Seule la session qui a appliqué peut annuler ou confirmer** (une autre session reçoit « Permission denied ») : `untap` ne marche donc que si la session
-  mémorisée existe ; sinon attendre l'expiration du délai.
-- Ne pas tester `dry-run` avec `wan_port` égal au port où est branché le poste de travail : il en est coupé le temps du délai (arrivé une fois).
+## Real test results and lessons (Oct 2026, one FTTH line)
 
-## Débit et marquage 802.1p : mesures (30/10/2026)
+**The conversion worked on one Orange FTTH line**: the router took the Livebox's place and obtained its public address (`/21`, gateway, Orange DNS, 3-day lease), with internet and DNS. What had to be understood to get there:
 
-**Le marquage de tout le trafic en priorité 6 bride l'émission.** Même chemin (`iperf3`, 4 flux, depuis le Deco vers un serveur public à Paris) :
+1. **A first attempt failed** (lease in `172.16.0.0/16`, silent gateway) with a dummy password, the salt and token byte generated by `orange-gen-auth.sh`, a hostname, option 121, no option 125 and the router's own MAC address. The cause was **not isolated**: several things changed at once before success.
+2. **Capture from the real Livebox**: `to-router.uc tap go=yes` makes the router a transparent VLAN 832 bridge between the ONT and the Livebox (CPU as a third party). Then `tcpdump` on `eth0` (`vlan 832 and (udp port 67 or udp port 68)`) sees the Livebox's DHCP request with its **real token** (option 90: 16 random printable characters of salt, a random byte, a hash), its option 125, no hostname, 12 requested options without 121, 802.1p priority 6.
+3. **Replay of the captured token** with a request aligned to the Livebox's (including the MAC on the wire, set in the `device` section): **public address obtained**. The password was not needed: the token already contains its hash. The token **will expire** (5 to 8 weeks according to community sources, not verified): it must be recaptured by putting the Livebox back behind the router with `tap`. It is stored in the router config (`network.wan.sendopts`): any config backup is sensitive.
+4. **The Livebox and the router cannot be active together** (same identity at Orange): switch the Livebox off before `convert`.
 
-| Marquage | Réception | Émission |
+**Known defects of `to-router.uc`**
+- **The automatic confirmation does not run to the end**: the process stops after one or two passes of the wait loop, with no error and no sign of memory exhaustion (two attempts, cause not found; the loop in isolation runs fine). You must therefore **confirm by hand**: `to-router.uc confirm`, which uses the session stored in `/tmp/to-router.sid`. Without confirmation, `rpcd` rolls back at the end of the timeout (300 s).
+- **Only the session that applied can cancel or confirm** (another session gets "Permission denied"): `untap` only works if the stored session exists; otherwise wait for the timeout to expire.
+- Do not test `dry-run` with `wan_port` equal to the port your workstation is plugged into: it gets cut off for the duration of the timeout (happened once).
+
+## Throughput and 802.1p marking: measurements (Oct 2026)
+
+All figures are from one P9 on a gigabit line, single test run, not a benchmark.
+
+**Marking all traffic at priority 6 throttles upload.** Same path (`iperf3`, 4 streams, from the router to a public server in Paris):
+
+| Marking | Download | Upload |
 |---|---|---|
-| Tout en priorité 6 (mapping `0:6` sans règles) | 266 Mbit/s | **4,5 Mbit/s** |
-| Données en 0, contrôle (ICMP, IGMP, DHCP) en 6 | 271 Mbit/s | **218 Mbit/s** |
+| Everything at priority 6 (mapping `0:6` without rules) | 266 Mbit/s | **4.5 Mbit/s** |
+| Data at 0, control traffic (ICMP, IGMP, DHCP) at 6 | 271 Mbit/s | **218 Mbit/s** |
 
-**Réglage retenu (mesuré le 30/10/2026, voir plus bas pour l'accélération)** : le périphérique `eth0.832` n'a que le mapping `6:6`, donc le trafic ordinaire
-(priorité 0) sort en priorité 0 sur le fil ; des règles `nft` (table `orange_prio` en hook `output`, service `orange-prio`) ne marquent en 6 que le contrôle généré par
-le Deco (ICMP, IGMP, DHCP unicast). `convert` installe ce mapping, ces règles et active l'accélération logicielle. Un schéma antérieur (mapping `0:6 1:0 6:6` plus des
-règles `postrouting` mettant les données en priorité 1) donnait les mêmes débits sans accélération mais **ne fonctionne pas avec elle** : les flux accélérés ne passent
-plus par netfilter, ils auraient gardé la priorité 0 et le mapping `0:6` les aurait remis en priorité 6, donc bridés.
-**Écart avec la Livebox** : la demande DHCP *broadcast* d'`udhcpc` (socket brut, invisible pour `nft`) part désormais en priorité 0 alors que la Livebox l'envoie en 6.
-Orange l'a acceptée (bail obtenu en moins d'une seconde) et l'émission n'a pas été bridée ; c'est une mesure unique, rien ne garantit qu'Orange ne changera pas.
-**Non vérifié** : le comportement après un redémarrage complet, et la reprise par un `sysupgrade` (le service et le fichier ne sont pas dans l'image).
+**Chosen setup**: the `eth0.832` device only has the `6:6` mapping, so ordinary traffic (priority 0) leaves at priority 0 on the wire. `nft` rules (table `orange_prio` in the `output` hook, service `orange-prio`) mark only router-generated control traffic at 6 (ICMP, IGMP, unicast DHCP). `convert` installs this mapping and these rules and enables software offloading. An earlier scheme (mapping `0:6 1:0 6:6` plus `postrouting` rules setting data to priority 1) gave the same throughput without offloading but **does not work with it**: offloaded flows no longer go through netfilter, so they would have stayed at priority 0, and the `0:6` mapping would have put them back at priority 6, hence throttled.
+**Difference from the Livebox**: `udhcpc`'s *broadcast* DHCP request (raw socket, invisible to `nft`) now leaves at priority 0 whereas the Livebox sends it at 6. Orange accepted it (lease obtained in under a second) and upload was not throttled. This is a single measurement; nothing guarantees Orange will not change this.
+**Not verified**: behaviour after a full reboot, and persistence across `sysupgrade` (the service and file are not in the image).
 
-**Plafond d'environ 320 Mbit/s en filaire, dû au processeur du Deco** : depuis un NAS filaire, un flux HTTPS donne 321 Mbit/s avec le processeur du Deco à 0 %
-d'inactivité et 93 à 98 % de traitement d'interruptions. Quatre flux donnent 279 Mbit/s au total (processeur saturé aussi). Depuis le Wi-Fi d'un Mac (390 Mbit/s négociés),
-environ 200 Mbit/s en émission avec le processeur libre à environ 60 % : là, c'est le Wi-Fi. Aucune mesure ne montre un plafond côté Orange à ce niveau.
+**Ceiling of about 320 Mbit/s wired, caused by the P9's CPU** (without offloading): from a wired NAS, one HTTPS stream gives 321 Mbit/s with the router CPU at 0% idle and 93 to 98% interrupt handling. Four streams give 279 Mbit/s total (CPU also saturated). From a laptop on Wi-Fi (390 Mbit/s negotiated), about 200 Mbit/s upload with the CPU about 60% free: there the limit is Wi-Fi. No measurement shows a ceiling on the Orange side at this level.
 
-**Pièges de mesure rencontrés** : `wget` de BusyBox est lent et en HTTPS il sature le processeur du Deco (il mesure le Deco, pas la ligne) ; utiliser `iperf3` ou un
-client externe. Un serveur public peut être mauvais en réception (23 à 35 Mbit/s sur l'un, 177 sur un autre depuis le même Mac). `proof.ovh.net` redirige HTTP vers
-HTTPS et ne sert qu'un flux de huit en parallèle. Des `wget` lancés en parallèle puis tués par `timeout` peuvent rester actifs : toujours les arrêter de force.
+**Measurement pitfalls**: BusyBox `wget` is slow and with HTTPS it saturates the router CPU (it measures the router, not the line); use `iperf3` or an external client. A public server can be poor at receiving (23 to 35 Mbit/s on one, 177 on another from the same laptop). `proof.ovh.net` redirects HTTP to HTTPS and serves only one stream out of eight in parallel. Parallel `wget`s killed by `timeout` can stay alive: always kill them forcefully.
 
-### Accélération logicielle des flux (`flow_offloading`) : mesures du 30/10/2026
-`firewall.@defaults[0].flow_offloading='1'` (le pare-feu crée un `flowtable` sur `eth0` et les deux radios ; les modules `nf_flow_table` étaient déjà dans l'image).
-Appliqué avec le rollback de `rpcd`, puis confirmé. Même client filaire (le NAS), même serveur, un flux HTTPS :
+### Software flow offloading (`flow_offloading`)
+`firewall.@defaults[0].flow_offloading='1'` (the firewall creates a `flowtable` on `eth0` and both radios; the `nf_flow_table` modules were already in the image). Applied with `rpcd` rollback, then confirmed. Same wired client (the NAS), same server, one HTTPS stream:
 
-| | Sans accélération | Avec accélération |
+| | Without offloading | With offloading |
 |---|---|---|
-| Réception | 321 puis 339 et 361 Mbit/s | **818 et 850 Mbit/s** |
-| Émission (NAS vers Cloudflare) | 114 à 199 Mbit/s | 162 et 167 Mbit/s (non bridée) |
-| Processeur du Deco pendant la réception | 0 % libre, 93 à 98 % d'interruptions | 0 à 4 % libre, 94 à 100 % d'interruptions |
+| Download | 321, then 339 and 361 Mbit/s | **818 and 850 Mbit/s** |
+| Upload (NAS to Cloudflare) | 114 to 199 Mbit/s | 162 and 167 Mbit/s (not throttled) |
+| Router CPU during download | 0% idle, 93 to 98% interrupts | 0 to 4% idle, 94 to 100% interrupts |
 
-37 flux marqués `OFFLOAD` dans conntrack ; les 60 trames TCP sortantes capturées étaient en `p 0`. Depuis le Mac en Wi-Fi : émission 214 Mbit/s (193 à 198 avant),
-réception 151 Mbit/s (le Wi-Fi limite). **Le processeur reste saturé** : on ne sait pas ce que le Deco pourrait encore débiter, ni si 850 Mbit/s est limité par lui, par OVH ou par le NAS.
-**Non vérifié** : la stabilité dans la durée (mesures sur quelques minutes), le comportement avec beaucoup de flux simultanés (huit flux vers OVH n'ont pas pu être mesurés),
-et les effets de bord connus de l'accélération logicielle (par exemple sur des règles de pare-feu ou de QoS ajoutées plus tard).
+37 flows marked `OFFLOAD` in conntrack; the 60 outgoing TCP frames captured were at `p 0`. From a laptop on Wi-Fi: upload 214 Mbit/s (193 to 198 before), download 151 Mbit/s (Wi-Fi is the limit). **The CPU remains saturated**: it is unknown what the router could still deliver, or whether 850 Mbit/s is limited by the router, by OVH or by the NAS.
+**Not verified**: long-term stability (measurements over a few minutes), behaviour with many simultaneous flows (eight streams to OVH could not be measured), and known side effects of software offloading (for example on firewall or QoS rules added later).

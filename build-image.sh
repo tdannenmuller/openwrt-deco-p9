@@ -1,6 +1,6 @@
 #!/bin/bash
 # Construit l'image du Deco P9 avec les trois patchs (dont le paquet plc-bcm), puis la vérifie.
-# Machine Linux avec la toolchain OpenWrt (voir NOTES.md, section « Construire »). Non testé sur macOS.
+# Machine Linux avec la toolchain OpenWrt (voir docs/build.md). Non testé sur macOS.
 #
 #   ./build-image.sh                # build + vérification, copie dans ./out/
 #   WORK=/chemin ./build-image.sh   # dossier de travail (défaut : ~/openwrt-deco-p9-build)
