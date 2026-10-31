@@ -11,6 +11,8 @@
 //                                                    FULL conversion to a router. Without "go=yes": shows the plan and stops.
 //   to-router.uc restore [reload=no]                 goes back to the configuration from before "convert" (backup in /root/backup-router)
 //   to-router.uc confirm | rollback-now             confirms / cancels by hand the last "apply" (convert, tap), via the stored session
+//   to-router.uc verify-token                        checks that the MD5 of the token in the configuration matches the password in /etc/config/orange-auth (never displays it)
+//   to-router.uc renew [go=yes] [timeout=120]        new token (random salt and byte) with automatic rollback; then "confirm"
 //   to-router.uc guard   [lan_ip=..]                 tells whether "lan_ip" already answers (what convert checks before touching anything)
 //   to-router.uc selftest                            reads convert's success checks (wan, ping, DNS) and the state of the services
 //   to-router.uc tap go=yes [ont_port=3 livebox_port=5 timeout=900]   transparent VLAN 832 ONT <-> Livebox (to capture what the Livebox sends); untap cancels it
@@ -31,6 +33,7 @@
 import * as ubus from "ubus";
 import * as fs from "fs";
 import { cursor } from "uci";
+import { md5 } from "digest";
 
 let opts = {
 	wan_port: "3", vid: "832", timeout: "", mac: "", auth: "",
@@ -64,7 +67,7 @@ table inet orange_prio {
 const PRIO_INIT = `#!/bin/sh /etc/rc.common
 # Loads the 802.1p priority rules for Orange's WAN VLAN (see /etc/orange-prio.nft). Installed by to-router.uc.
 START=99
-USE_PROCD=0
+# no USE_PROCD line: rc.common tests whether the variable is non-empty, so USE_PROCD=0 would enable procd mode
 start() { nft -f /etc/orange-prio.nft; }
 stop() { nft delete table inet orange_prio 2>/dev/null; }
 restart() { stop; start; }
@@ -73,12 +76,13 @@ function prio_install() {
 	fs.writefile("/etc/orange-prio.nft", prio_nft("eth0." + opts.vid));
 	fs.writefile("/etc/init.d/orange-prio", PRIO_INIT);
 	system("chmod +x /etc/init.d/orange-prio");
-	service("orange-prio", "enable");
-	service("orange-prio", "restart");
+	// system() and not service(): service() is declared further down and is not visible from here.
+	system([ "/etc/init.d/orange-prio", "enable" ]);
+	system([ "/etc/init.d/orange-prio", "restart" ]);
 }
 function prio_remove() {
-	service("orange-prio", "stop");
-	service("orange-prio", "disable");
+	system([ "/etc/init.d/orange-prio", "stop" ]);
+	system([ "/etc/init.d/orange-prio", "disable" ]);
 	system("rm -f /etc/orange-prio.nft /etc/init.d/orange-prio");
 }
 
@@ -235,6 +239,62 @@ function net_ok() {
 
 // does the Livebox (or anything else) already answer at the address this Deco is going to take?
 function lan_ip_taken() { return system(`ping -c 2 -W 2 '${opts.lan_ip}' >/dev/null 2>&1`) == 0; }
+
+// --- Orange authentication token (option 90): same structure as the one captured on a real Livebox ---
+// 11 null bytes, 1A 09 00 00 05 58 01 03 41, then three blocks: 01 + "fti/login", 3C + salt (16 characters), 03 + byte + MD5(byte, password, salt).
+// A real Livebox's salt and byte are random (printable salt, not just digits): we imitate them.
+const TOKEN_HEAD = "00:00:00:00:00:00:00:00:00:00:00:1A:09:00:00:05:58:01:03:41";
+const SALT_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%,_|}";
+function hexs(s) { return join(":", map(split(s, ""), (ch) => sprintf("%02X", ord(ch)))); }
+function md5pairs(s) { return join(":", map(match(uc(md5(s)), /../g), (m) => m[0])); }
+function rnd(n) {
+	let f = fs.open("/dev/urandom", "r"), s = f.read(n);
+	f.close();
+	return s;
+}
+function random_string(n, chars) {
+	let r = rnd(n), o = "";
+	for (let i = 0; i < n; i++)
+		o += substr(chars, ord(r, i) % length(chars), 1);
+	return o;
+}
+function build_token(login, password, byte, salt) {
+	let id = "fti/" + login;
+	return `${TOKEN_HEAD}:${sprintf("%02X:%02X", 0x01, 2 + length(id))}:${hexs(id)}:${sprintf("%02X:%02X", 0x3c, 2 + length(salt))}:${hexs(salt)}:${sprintf("%02X:%02X", 0x03, 3 + length(salt))}:${hexs(byte)}:${md5pairs(byte + password + salt)}`;
+}
+// decomposes a token (hexadecimal separated by ":"): { login, salt, byte, md5 } or null
+function parse_token(hexstr) {
+	let b = map(split(hexstr, ":"), (x) => hex(x));
+	if (length(b) < 40 || b[11] != 0x1a || b[20] != 0x01) return null;
+	let str = (a, from, to) => join("", map(slice(a, from, to), (x) => chr(x)));
+	let i = 20, ll = b[i + 1];
+	let login = str(b, i + 2, i + ll);
+	i += ll;
+	if (b[i] != 0x3c) return null;
+	let sl = b[i + 1], salt = str(b, i + 2, i + sl);
+	i += sl;
+	if (b[i] != 0x03) return null;
+	let tl = b[i + 1], byte = str(b, i + 2, i + 3), md = join("", map(slice(b, i + 3, i + tl), (x) => sprintf("%02x", x)));
+	return { login, salt, byte, md5: md };
+}
+// reads /etc/config/orange-auth (LOGIN, PASSWORD); never displayed
+function read_creds() {
+	let f = fs.readfile(opts.creds || "/etc/config/orange-auth");
+	if (!f) die("credentials not found (" + (opts.creds || "/etc/config/orange-auth") + ")");
+	let o = {};
+	for (let l in split(f, "\n")) {
+		let m = match(l, /^([A-Z]+)="?([^"]*)"?$/);
+		if (m) o[m[1]] = m[2];
+	}
+	if (!o.LOGIN || !o.PASSWORD) die("LOGIN and PASSWORD expected in the credentials file");
+	return o;
+}
+function current_wan_token() {
+	let so = c.get("network", "wan", "sendopts");
+	for (let s in (type(so) == "array" ? so : [ so ]))
+		if (match(s, /^90:/)) return substr(s, 3);
+	return null;
+}
 
 function convert_run() {
 	let timeout = int(opts.timeout || "300");
@@ -410,6 +470,66 @@ case "show-prio":
 	print(prio_nft("eth0." + opts.vid));
 	break;
 
+case "install-prio":
+	// For a Deco already converted by hand or flashed afterwards: a sysupgrade removes these files unless they are listed here.
+	prio_install();
+	let keep = fs.readfile("/etc/sysupgrade.conf") || "";
+	for (let f in [ "/etc/orange-prio.nft", "/etc/init.d/orange-prio" ])
+		if (index(split(keep, "\n"), f) < 0)
+			keep += (length(keep) && substr(keep, -1) != "\n" ? "\n" : "") + f + "\n";
+	fs.writefile("/etc/sysupgrade.conf", keep);
+	print("orange-prio installed and enabled at boot; files added to /etc/sysupgrade.conf\n");
+	break;
+
+case "remove-prio":
+	prio_remove();
+	print("orange-prio removed (the lines in /etc/sysupgrade.conf are left alone)\n");
+	break;
+
+case "selftest-token": {
+	// round trip with no secret: build a dummy token, read it back, recompute the MD5
+	let tk = build_token("dummy", "dummy-password", "p", "wQM|f,r}Wrd%k_YD");
+	let pt = parse_token(tk);
+	print("dummy token: ", length(split(tk, ":")), " bytes\n");
+	print("read back: login=", pt.login, " salt=", pt.salt, " byte=", pt.byte, "\n");
+	print("recomputed MD5 identical: ", md5("p" + "dummy-password" + pt.salt) == pt.md5 ? "YES" : "NO", "\n");
+	print("random: salt of ", length(random_string(16, SALT_CHARS)), " characters\n");
+	break;
+}
+
+case "verify-token": {
+	// is the token formula right? recomputes the MD5 of the token CURRENTLY in the configuration with the password from the file
+	let cr = read_creds(), tk = current_wan_token();
+	if (!tk) die("no token (option 90) in network.wan.sendopts");
+	let pt = parse_token(tk);
+	if (!pt) die("unreadable token");
+	let calc = md5(pt.byte + cr.PASSWORD + pt.salt);
+	print("token login: ", pt.login == "fti/" + cr.LOGIN ? "matches the file" : "DIFFERENT from the file", "\n");
+	print("salt (", length(pt.salt), " chars), byte: ", pt.byte == "" ? "?" : "read", "\n");
+	print("MD5 recomputed with the password from the file: ", calc == pt.md5 ? "IDENTICAL: the password and the formula are correct" : "DIFFERENT: wrong password or formula", "\n");
+	break;
+}
+
+case "renew": {
+	// new token (random salt and byte, like the Livebox), applied with rollback; then confirm with "confirm"
+	let cr = read_creds();
+	let tk = build_token(cr.LOGIN, cr.PASSWORD, random_string(1, "abcdefghijklmnopqrstuvwxyz"), random_string(16, SALT_CHARS));
+	let mac = c.get("network", "wan_dev", "macaddr") || c.get("network", "wan", "macaddr");
+	let sendopts = [ "77:" + USERCLASS77, "90:" + tk, "125:" + OPT125 ];
+	if (opts.go != "yes") {
+		print("renew: a new token would be applied to network.wan.sendopts (", length(tk), " characters), with automatic rollback. go=yes to do it.\n");
+		break;
+	}
+	let timeout = int(opts.timeout || "120");
+	let sid = open_session(timeout + 600);
+	remember(sid);
+	call("uci", "delete", { config: "network", section: "wan", option: "sendopts", ubus_rpc_session: sid });
+	call("uci", "set", { config: "network", section: "wan", values: { sendopts: sendopts }, ubus_rpc_session: sid });
+	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
+	log(`renew: new token applied; automatic rollback in ${timeout} s. Check that the lease is public (not 172.16.x.x) then: to-router.uc confirm`);
+	break;
+}
+
 case "guard":
 	print(opts.lan_ip, lan_ip_taken() ? " ANSWERS: convert would refuse (the Livebox is still there)\n" : " does not answer: convert could continue\n");
 	break;
@@ -435,5 +555,5 @@ case "diag": {
 }
 
 default:
-	die("expected command: plan | check | dry-run | convert | restore | tap | untap | confirm | rollback-now | show-prio | guard | selftest | diag");
+	die("expected command: plan | check | dry-run | convert | restore | tap | untap | confirm | rollback-now | show-prio | install-prio | remove-prio | verify-token | renew | selftest-token | guard | selftest | diag");
 }
