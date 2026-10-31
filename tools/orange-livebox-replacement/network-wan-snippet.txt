@@ -1,0 +1,57 @@
+# TO ADD to /etc/config/network, AFTER creating VLAN 832 in
+# LuCI > Network > Switch (CPU port + chosen WAN port, both "tagged").
+# Does not touch the existing 'lan' / 'wifi-iface' sections.
+#
+# TO REPLACE before use:
+#   - 11:22:33:AA:BB:CC  -> the MAC address of THE REAL Livebox being replaced (not the Deco's)
+#   - Livebox4            -> the actual model if it is not a Livebox 4 (see README.md)
+#   - 0111223344... (clientid/sendopts 61) -> same MAC as macaddr, without the ':', prefixed with 01
+
+# VERIFIED on the wire (tcpdump capture on a Deco, without an ONT, 30/10/2026): this block produces a DHCPDISCOVER with hostname,
+# vendor class "sagem" (option 60), client identifier (61), user class (77) and option 90, in VLAN 832.
+# NOT verified: acceptance by Orange, token validity, 802.1p priority on the wire of the WAN port.
+# The "vendorclass" and "userclass" options of the original template do not exist in OpenWrt's DHCP client (ignored);
+# "sendopts" 12, 60 and 61 duplicated hostname, vendorid and clientid: removed.
+
+# 802.1p priority marking (README item 4): without "type/ifname/vid" the section is ignored (verified: p 0 on the wire);
+# complete, the DHCP frames go out as "vlan 832, p 6" (verified on the processor side; switch port not verified).
+config device
+	option name 'eth0.832'
+	option type '8021q'
+	option ifname 'eth0'
+	option vid '832'
+	list egress_qos_mapping '0:6'
+	list egress_qos_mapping '1:0'
+	list egress_qos_mapping '6:6'
+
+config interface 'wan'
+	option proto 'dhcp'
+	option device 'eth0.832'
+	option auto '1'
+	option hostname 'livebox'
+	option vendorid 'sagem'
+	option macaddr '11:22:33:AA:BB:CC'
+	option clientid '0111223344...'
+	option defaultreqopts '0'
+	option reqopts '1 3 6 15 28 51 58 59 90 119 120 125'
+	list sendopts '77:2b46535644534c5f6c697665626f782e496e7465726e65742e736f66746174686f6d652e4c697665626f7834'
+	list sendopts '90:XAUTH'
+
+# NOT TESTED (IPv6): the lafibre.info forum says the DHCPv6 clientid must be "00030001" + the Livebox MAC without ":"
+# (like IPv4), not the example value below.
+config interface 'wan6'
+	option auto '0'
+	option proto 'dhcpv6'
+	option device 'eth0.832'
+	option reqprefix 'auto'
+	option reqaddress 'none'
+	option defaultreqopts '0'
+	option reqopts '11 17 23 24'
+	option noclientfqdn '1'
+	option noacceptreconfig '1'
+	option clientid '00030001A23456781926'
+	option iface_dslite '0'
+	list sendopts '11:XAUTH'
+	list sendopts '15:FSVDSL_livebox.Internet.softathome.Livebox4'
+	list sendopts '16:0000040e0005736167656d'
+	list sendopts '17:000005580006000e495056365f524551554553544544'

@@ -1,162 +1,122 @@
-# Essai : liaison Wi-Fi « pont » entre deux Deco P9 (WDS et 802.11s), sans relayd
+# Experiment: a "bridge" Wi-Fi link between two TP-Link Deco P9 running OpenWrt (WDS and 802.11s, no relayd)
 
-**Statut : WDS essayé le 29/10/2026 sur le 2,4 GHz puis sur le 5 GHz ; maillage 802.11s : 2,4 GHz réussi, 5 GHz canal DFS 112 échec, 5 GHz canal 36 (sans DFS, radio libre) réussi.** Voir « Résultats » en bas.
-Les commandes `swap-mesh`, `swap-basic` et `mesh` n'ont pas été essayées. Le script modifié après la phase 1
-(règles `nft` et `ip rule`, variables `RADIO` et `CHAN`, redémarrage de `wpad` dans `swap-*`, retrait de `mesh_fwding`) a servi aux essais 5 GHz et maillage.
+**Status (Oct 2026):** WDS worked as a real bridge on 2.4 GHz and on 5 GHz. 802.11s mesh worked on 2.4 GHz and on 5 GHz channel 36 (no DFS, radio otherwise idle). It failed on DFS channel 112, and the cause is not established. See "Results" below.
 
-## Pourquoi
+The script was modified after phase 1 (`nft` and `ip rule` rules, `RADIO` and `CHAN` variables, `wpad` restart in `swap-*`, removal of `mesh_fwding`); the modified version was used for the 5 GHz and mesh tests. The boot-time cleanup hook (see "Safeguards") has never actually run.
 
-Une station Wi-Fi standard ne peut pas être mise dans un pont (elle n'émet que sous sa propre adresse MAC) :
-c'est la raison d'être de `relayd`. Si les deux extrémités sont des Deco sous OpenWrt, deux solutions
-donnent un vrai pont : **WDS (4addr)** et le **maillage 802.11s**. Cet essai dit lesquelles marchent ici.
+## Why
 
-Vérifié (lecture seule) : les deux radios de chaque Deco (`ath10k` 5 GHz, `ath9k` 2,4 GHz) annoncent
-`AP/VLAN` et `mesh point`. C'est nécessaire, pas suffisant.
+A standard Wi-Fi station cannot be put in a bridge (it only transmits with its own MAC address). This is the reason `relayd` exists. If both ends are Decos running OpenWrt, two approaches give a real bridge: **WDS (4addr)** and **802.11s mesh**. This experiment checks which of them work here.
 
-## Ce que l'essai teste, et ne teste pas
+Verified (read-only): both radios of each Deco (`ath10k` 5 GHz, `ath9k` 2.4 GHz) advertise `AP/VLAN` and `mesh point`. That is necessary, not sufficient.
 
-- Teste : l'association WDS/maillage sur la **radio 2,4 GHz (`ath9k`)**, et surtout qu'une trame dont l'adresse
-  MAC source est **étrangère** à l'interface Wi-Fi traverse la liaison (`probe`). C'est ce qui prouve un pont réel.
-- Ne teste **pas** la radio 5 GHz (`ath10k-ct`), celle qui servirait en vrai : le résultat sur `ath9k` ne vaut
-  pas pour `ath10k`. Cela demanderait de toucher à la radio 5 GHz du Deco 1, qui porte sa liaison avec la Livebox.
-- Ne mesure **pas** le débit.
+## What the experiment tests, and what it does not
 
-## Garde-fous
+- Tests: WDS/mesh association, and above all that a frame whose source MAC address is **foreign** to the Wi-Fi interface crosses the link (`probe`). That is what proves a real bridge.
+- The first phase used only the 2.4 GHz radio (`ath9k`); 5 GHz (`ath10k-ct`) was tested afterwards (see the results sections). A result on one radio does not carry over to the other.
+- Throughput was measured only in the 5 GHz tests, with a single iperf3 TCP stream. These numbers are a rough indication, not a link capacity.
+- Long-term stability was not measured: each test lasted a few minutes with the two Decos next to each other.
 
-- Seule la radio `radio1` (2,4 GHz) est touchée. Le CPL, le câble et le Wi-Fi 5 GHz restent en place.
-- Le pont de test `br-wdstest` (adresses `10.77.0.x`) n'est **jamais** relié à `br-lan` : pas de boucle avec le CPL.
-- Réseau de test : SSID `WDSTEST` (caché), clé `wdstest-2026` (publique, sans importance : l'essai dure quelques minutes).
-- **Arrêt automatique** au bout de 20 min (`AUTOSTOP=<minutes>`, 0 pour désactiver) : `backhaul-test.sh stop`
-  supprime tout et restaure le canal de la radio. Il tourne dans un processus du Deco ; il ne protège pas d'un figement.
-- Pendant l'essai, le Wi-Fi 2,4 GHz du Deco 2 passe sur le canal 1 (celui du Deco 1) puis revient au canal 11.
-- Pas de `network restart` : le script utilise `network reload` et `wifi reload radio1`.
-- **Nettoyage au démarrage** : `apply` ajoute une ligne `... stop # wdstest-cleanup` à `/etc/rc.local` (retirée par `stop`), pour que
-  la configuration de test, écrite sur la flash, disparaisse si le Deco est redémarré à la main ou plante. **Ajouté après l'incident du
-  5 GHz canal 48 ; jamais exécuté.** Le minuteur d'arrêt automatique, lui, ne survit pas à un redémarrage.
+## Safeguards
 
-## Préparatifs déjà faits
+- By default only `radio1` (2.4 GHz) is touched. Other links (powerline, cable, 5 GHz) stay in place.
+- The test bridge `br-wdstest` (addresses `10.77.0.x`) is **never** connected to `br-lan`: no loop with the powerline link.
+- Test network: hidden SSID `WDSTEST`, throwaway key set in the script (public and unimportant: the test lasts a few minutes). Change both if you run this on a network where it matters.
+- **Automatic stop** after 20 min (`AUTOSTOP=<minutes>`, 0 to disable): `backhaul-test.sh stop` removes everything and restores the radio's channel. It runs as a process on the Deco, so it does not protect against a freeze or a reboot.
+- During the test, the 2.4 GHz channel of the second Deco is switched to the first Deco's channel, then restored.
+- No `network restart`: the script uses `network reload` and `wifi reload <radio>`.
+- **Cleanup at boot**: `apply` adds a `... stop # wdstest-cleanup` line to `/etc/rc.local` (removed by `stop`), so the test configuration, written to flash, disappears if the Deco is rebooted by hand or crashes. It was added after an unstable test on 5 GHz channel 48 (see the end). It has never been executed.
 
-- Script copié sur les deux Deco : `/root/backhaul-test.sh` (la copie du dépôt est `backhaul-test.sh`).
-- Paquets `wpad-mesh-mbedtls` et `wpad-basic-mbedtls` téléchargés dans `/root/pkg/` sur les deux Deco
-  (1,4 Mo de flash chacun ; `rm -r /root/pkg` pour les retirer), identiques (SHA-256 comparés).
+## Preparation
 
-## Déroulement (rôles : Deco 1 = 10.77.0.1, Deco 2 = 10.77.0.2)
+- Copy the script to both Decos as `/root/backhaul-test.sh`.
+- Download the `wpad-mesh-mbedtls` and `wpad-basic-mbedtls` packages into `/root/pkg/` on both Decos (about 1.4 MB of flash each; `rm -r /root/pkg` removes them).
 
-Joindre le Deco 2 par le Wi-Fi ou le CPL (`ssh root@192.168.0.6`) et le Deco 1 (`ssh root@192.168.0.2`).
+## Procedure (roles: Deco 1 = 10.77.0.1, Deco 2 = 10.77.0.2)
 
-### Phase 1 : WDS (sans changer de paquet)
+Reach each Deco over SSH through a link that the test will not disturb (cable or powerline).
 
-1. Deco 1 : `/root/backhaul-test.sh wds-ap 10.77.0.1`  (recharge le Wi-Fi 2,4 GHz du Deco 1 quelques secondes)
-2. Deco 2 : `/root/backhaul-test.sh wds-sta 10.77.0.2`
-3. Attendre ~20 s, puis sur chaque Deco : `/root/backhaul-test.sh status` (le Deco 2 doit voir la station / le
-   Deco 1 doit voir le Deco 2, et une interface `phy1-ap0.sta1` côté point d'accès indique le mode 4addr).
-4. Deco 2 : `/root/backhaul-test.sh probe 10.77.0.1`.
-   - Réponses : le WDS relaie une adresse étrangère, **donc un pont réel**.
-   - Aucune réponse alors que l'association existe : le mode 4addr ne fonctionne pas (ou n'est pas actif).
-5. Sur les deux : `/root/backhaul-test.sh stop`.
+### Phase 1: WDS (no package change)
 
-### Phase 2 : maillage 802.11s (change `wpad`, coupe le Wi-Fi ~30 s par Deco)
+1. Deco 1: `/root/backhaul-test.sh wds-ap 10.77.0.1` (reloads its Wi-Fi radio for a few seconds)
+2. Deco 2: `/root/backhaul-test.sh wds-sta 10.77.0.2`
+3. Wait about 20 s, then run `/root/backhaul-test.sh status` on each Deco. Deco 2 should see the access point, Deco 1 should see Deco 2, and an interface such as `phy1-ap0.sta1` on the access point side indicates 4addr mode.
+4. Deco 2: `/root/backhaul-test.sh probe 10.77.0.1`.
+   - Replies: WDS relays a foreign address, **so it is a real bridge**.
+   - No replies although the association exists: 4addr mode is not working (or not active).
+5. On both: `/root/backhaul-test.sh stop`.
 
-1. Deco 2 d'abord : `/root/backhaul-test.sh swap-mesh`. Si tout va bien, puis sur le Deco 1 :
-   **attention, cela coupe son Wi-Fi client vers la Livebox pendant ~30 à 60 s (donc son accès Internet et le
-   relais).** Le faire depuis le Deco 2 par SSH (le CPL reste en place), pas depuis une connexion Wi-Fi du Deco 1.
-2. Les deux : `/root/backhaul-test.sh mesh 10.77.0.1` (Deco 1) et `... mesh 10.77.0.2` (Deco 2).
-3. `status` (la table `mpath` doit montrer le voisin), puis `probe` comme ci-dessus.
-4. `stop` sur les deux, puis `swap-basic` pour remettre `wpad-basic` (sauf si on garde le maillage).
+### Phase 2: 802.11s mesh (changes `wpad`, Wi-Fi down for ~30 s per Deco)
 
-## Si quelque chose casse
+1. Run `swap-mesh` on Deco 2 first. If all goes well, do the same on Deco 1. **Warning: this cuts that Deco's Wi-Fi for 30 to 60 s, including any Wi-Fi uplink to the upstream router (so its Internet access and relay function).** Do it over SSH from the other Deco or over a wired link, not over a Wi-Fi connection to that Deco.
+2. On both: `/root/backhaul-test.sh mesh 10.77.0.1` (Deco 1) and `... mesh 10.77.0.2` (Deco 2).
+3. `status` (the `mpath` table should show the neighbour), then `probe` as above.
+4. `stop` on both, then `swap-basic` to restore `wpad-basic` (unless you keep the mesh).
 
-- `/root/backhaul-test.sh stop` sur le Deco concerné (ou attendre l'arrêt automatique).
-- `swap-basic` si le Wi-Fi ne remonte pas après `swap-mesh`.
-- Les configurations d'origine ne sont pas sauvegardées : le script n'ajoute que les sections `wireless.wdstest`,
-  `network.wdstest`, `network.wdstest_dev`, et ne change que le canal de `radio1` (mémorisé dans
-  `/root/backhaul-test.saved`).
+## If something breaks
 
-## À noter dans NOTES.md après l'essai
+- `/root/backhaul-test.sh stop` on the affected Deco (or wait for the automatic stop).
+- `swap-basic` if Wi-Fi does not come back after `swap-mesh`.
+- Original configurations are not backed up: the script only adds the sections `wireless.wdstest`, `network.wdstest`, `network.wdstest_dev`, and only changes the channel of the chosen radio (saved in `/root/backhaul-test.saved`).
 
-Pour chaque mode : association réussie ou non, résultat de `probe`, messages de `logread | grep -E "hostapd|wpa|mesh"`,
-et rappeler que le résultat vaut pour `ath9k` (2,4 GHz), pas pour `ath10k` (5 GHz).
+## What to record after each test
 
-## Résultats de la phase 1 (WDS, 29/10/2026, radio 2,4 GHz `ath9k` seulement)
+For each mode: whether association succeeded, the `probe` result, messages from `logread | grep -E "hostapd|wpa|mesh"`, and which radio (`ath9k` or `ath10k`) the result applies to.
 
-**Le WDS (4addr) fonctionne comme un vrai pont sur `ath9k`.** Deco 1 en point d'accès (`wds-ap`), Deco 2 en client (`wds-sta`) :
-- association WPA2 réussie (signal −42 dBm), interface `phy1-ap1.sta1` créée côté point d'accès, `4addr: on` côté client ;
-- le Deco 1 a appris sur son interface WDS l'adresse MAC **étrangère** `02:77:00:00:00:02` (celle que `probe` impose au pont du Deco 2),
-  et les trames ICMP avec cette adresse source arrivent bien (capture `tcpdump` sur le Deco 1) ;
-- `probe` : 5 réponses sur 5, 1 à 26 ms, dans le sens Deco 2 vers Deco 1 ; le ping dans l'autre sens (`ping -I br-wdstest`) : 3 sur 3.
+## Phase 1 results (WDS, 2.4 GHz `ath9k` only)
 
-Non mesuré : le débit. Non essayé : le 5 GHz (`ath10k-ct`), le maillage 802.11s, la durée de stabilité (l'essai a duré quelques minutes).
+**WDS (4addr) works as a real bridge on `ath9k`.** Deco 1 as access point (`wds-ap`), Deco 2 as client (`wds-sta`):
+- WPA2 association succeeded (signal -42 dBm), interface `phy1-ap1.sta1` created on the access point side, `4addr: on` on the client side;
+- Deco 1 learned the **foreign** MAC address `02:77:00:00:00:02` on its WDS interface (the address `probe` forces on Deco 2's bridge), and ICMP frames with that source address do arrive (`tcpdump` capture on Deco 1);
+- `probe`: 5 replies out of 5, 1 to 26 ms, from Deco 2 to Deco 1; ping in the other direction (`ping -I br-wdstest`): 3 out of 3.
 
-**Pièges rencontrés (propres à un Deco en relais, sans rapport avec le WDS)** : les premiers `probe` échouaient sans réponse.
-1. `firewall4` a une chaîne d'entrée en `policy drop` qui n'accepte que `br-lan` et `phy0-sta0` : un pont hors zone est ignoré
-   (la chaîne de sortie, elle, est en `policy accept`).
-2. **Cause réelle de l'absence de réponse** : `relayd` installe `ip rule 2: from all iif lo lookup 16800`, avant la table principale.
-   Le trafic produit par le Deco lui-même (les réponses ping) allait donc vers la Livebox au lieu du pont de test.
-   Un ping fait avec `-I br-wdstest` contourne cette règle, d'où un diagnostic trompeur (les compteurs `OutEchoReps` augmentaient).
-   Contournement : `ip rule add to 10.77.0.0/24 lookup main pref 1`.
-   **À retenir pour une vraie utilisation** : sur un Deco relais, tout réseau local supplémentaire a ce même problème.
-3. `ip route get` de BusyBox n'est pas fiable (il affichait une route par défaut alors que la route directe existait).
+Not measured: throughput. Not tried in this phase: 5 GHz, mesh, long-term stability.
 
-## Après l'essai
+**Pitfalls (specific to a Deco used as a relay, unrelated to WDS):** the first `probe` runs got no reply.
+1. `firewall4` has an input chain with `policy drop` that only accepts `br-lan` and the Wi-Fi client interface: a bridge outside any zone is ignored (the output chain is `policy accept`).
+2. **Actual cause of the missing replies:** `relayd` installs `ip rule 2: from all iif lo lookup 16800`, ahead of the main table. Traffic generated by the Deco itself (ping replies) therefore went to the upstream router instead of the test bridge. A ping with `-I br-wdstest` bypasses this rule, which gave a misleading diagnosis (the `OutEchoReps` counters were increasing). Workaround: `ip rule add to 10.77.0.0/24 lookup main pref 1`. **Keep this in mind for real use:** on a Deco acting as a relay, any additional local network has the same problem.
+3. BusyBox `ip route get` is unreliable (it showed a default route although the direct route existed).
 
-`stop` sur les deux Deco a restauré les canaux (Deco 1 : 2,4 GHz canal 1 ; Deco 2 : canal 11) et supprimé toute la config de test ;
-les règles `nft` et `ip rule` ajoutées à la main ont été retirées. `tcpdump-mini` est resté installé sur les deux Deco.
+After the test, `stop` on both Decos restored the channels and removed all test configuration; the `nft` and `ip rule` rules added by hand were removed. `tcpdump-mini` stayed installed.
 
-## Résultats de l'essai WDS sur le 5 GHz (`ath10k-ct`, 29/10/2026)
+## WDS on 5 GHz (`ath10k-ct`)
 
-Même montage (Deco 1 en point d'accès `wds-ap`, Deco 2 en client `wds-sta`), avec `RADIO=radio0` ; Deco 1 sans toucher au canal
-(`CHAN=` vide, il suit la Livebox : canal 112, VHT80), Deco 2 forcé sur `CHAN=112`. Le Deco 1 était relié au Mac par câble pendant l'essai.
+Same setup (Deco 1 as access point `wds-ap`, Deco 2 as client `wds-sta`) with `RADIO=radio0`. Deco 1 kept its channel (`CHAN=` empty, so it follows the upstream router: channel 112, VHT80), Deco 2 forced to `CHAN=112`. Deco 1 was connected by cable during the test.
 
-**Le WDS (4addr) fonctionne aussi sur `ath10k-ct`.**
-- Association WPA2 réussie (−53 dBm, débit négocié 390 / 585 Mbit/s, `4addr: on` côté client, interface `phy0-ap1.sta1` côté point d'accès).
-- `probe` : 5 réponses sur 5 (1,7 à 12,9 ms) avec l'adresse MAC étrangère `02:77:00:00:00:02`, apprise par le Deco 1 sur son interface WDS.
-- **Débit mesuré (iperf3, TCP, un flux, 10 s) : 196 Mbit/s dans chaque sens**, sans retransmission.
-  Il est probablement limité par le processeur des Deco (l'iperf3 lui-même, ~38 % du CPU, et la commutation) plus que par la liaison :
-  les autres mesures sur ces Deco plafonnent aussi vers 200 Mbit/s (voir NOTES.md). À ne pas lire comme la capacité du lien radio.
-- Effets de bord : la radio 5 GHz du Deco 1 a été rechargée (sa liaison avec la Livebox est restée en place) ; celle du Deco 2 est passée
-  sur le canal DFS 112 (attente CAC de 60 s) avant de revenir sur le canal 36 avec `stop`.
-- Non mesuré : la stabilité dans la durée (l'essai a duré quelques minutes), le maillage 802.11s, le passage d'un trafic réel ou multiple.
-  Le test a été fait avec les deux Deco proches l'un de l'autre.
+**WDS (4addr) also works on `ath10k-ct`.**
+- WPA2 association succeeded (-53 dBm, negotiated rate 390 / 585 Mbit/s, `4addr: on` on the client, interface `phy0-ap1.sta1` on the access point).
+- `probe`: 5 replies out of 5 (1.7 to 12.9 ms) with the foreign MAC `02:77:00:00:00:02`, learned by Deco 1 on its WDS interface.
+- **Measured throughput (iperf3, TCP, one stream, 10 s): 196 Mbit/s in each direction**, no retransmissions. This is probably limited by the Decos' CPU (iperf3 itself used about 38 % of CPU, plus switching) rather than by the radio link: other measurements on these Decos also top out around 200 Mbit/s. Do not read it as the link's capacity.
+- Side effects: Deco 1's 5 GHz radio was reloaded (its upstream Wi-Fi link stayed up); Deco 2's went to DFS channel 112 (60 s CAC wait) before returning to channel 36 on `stop`.
+- Not measured: long-term stability, real or multiple traffic flows. The Decos were close to each other.
 
-**Conséquence** : pour deux Deco sous OpenWrt, une liaison Wi-Fi 5 GHz en vrai pont (WDS) est possible **sans `relayd`**, si les deux extrémités sont OpenWrt.
-Elle ne dépend pas de la Livebox, qui ne supporte probablement pas le 4addr (non testé). Reste à décider de ce que doit faire la liaison montante
-si le Deco passerelle remplace la Livebox (voir les notes sur CPL + Wi-Fi).
+**Consequence:** for two Decos running OpenWrt, a 5 GHz Wi-Fi link as a real bridge (WDS) is possible **without `relayd`**, if both ends run OpenWrt. It does not depend on the upstream router, which probably does not support 4addr (not tested).
 
-## Résultats du maillage 802.11s (29/10/2026)
+## 802.11s mesh results
 
-Paquet `wpad-mesh-mbedtls` installé sur les deux Deco (puis `wpad-basic-mbedtls` remis après l'essai, `swap-basic`).
+Package `wpad-mesh-mbedtls` installed on both Decos (`wpad-basic-mbedtls` restored afterwards with `swap-basic`).
 
-**5 GHz (`ath10k-ct`, canal 112, DFS) : l'appairage ne s'établit pas.** L'authentification SAE réussit des deux côtés
-(`authenticated: yes`, `authorized: yes`, signal −50 dBm), mais le lien reste à `mesh plink: OPN_SNT` et `wpa_supplicant` répète
-`Mesh MPM: failed to send peering frame` pendant plus de 80 s (aucun chemin dans `mpath dump`). Le noyau a aussi journalisé
-`ath10k_pci: failed to create vdev 3 peer for AP/IBSS: -145` lors d'un rechargement du Wi-Fi ; je n'ai pas établi le lien avec l'échec.
-**Cause non établie** : canal DFS (le maillage n'effectue pas de CAC de lui-même), limite du firmware `ath10k` CT, ou autre.
-Non essayé : un canal 5 GHz sans DFS (cela imposerait de déplacer la radio 5 GHz du Deco 1, qui porte sa liaison avec la Livebox).
+**5 GHz (`ath10k-ct`, channel 112, DFS): peering does not establish.** SAE authentication succeeds on both sides (`authenticated: yes`, `authorized: yes`, signal -50 dBm), but the link stays at `mesh plink: OPN_SNT` and `wpa_supplicant` repeats `Mesh MPM: failed to send peering frame` for more than 80 s (no path in `mpath dump`). The kernel also logged `ath10k_pci: failed to create vdev 3 peer for AP/IBSS: -145` during a Wi-Fi reload; no link to the failure was established. **Cause not established:** DFS channel (mesh does not perform CAC by itself), a limitation of the `ath10k` CT firmware, or something else.
 
-**2,4 GHz (`ath9k`, canal 1) : le maillage fonctionne.** `mesh plink: ESTAB`, `MESH-PEER-CONNECTED`, chemin d'un saut dans `mpath dump`
-(métrique 10241), et `probe` : 5 réponses sur 5 (1,3 à 67,8 ms) avec l'adresse MAC étrangère, apprise par le Deco 1. Débit non mesuré.
+**2.4 GHz (`ath9k`, channel 1): mesh works.** `mesh plink: ESTAB`, `MESH-PEER-CONNECTED`, one-hop path in `mpath dump` (metric 10241), and `probe`: 5 replies out of 5 (1.3 to 67.8 ms) with the foreign MAC, learned by Deco 1. Throughput not measured.
 
-**Deux erreurs de mon script, corrigées (elles ont fait perdre l'essai 5 GHz une première fois)** :
-1. `mesh_fwding` est refusé par `wpa_supplicant` (`unknown network field 'mesh_fwding'`) : retiré (le noyau transfère par défaut).
-2. **Remplacer le paquet `wpad` ne change pas le démon déjà lancé.** L'ancien `wpa_supplicant` (variante basic) a refusé le mode maillage
-   (`too large mode (value=5 max_value=4)`) tant que le service n'était pas redémarré : `swap-*` fait maintenant `/etc/init.d/wpad restart`.
-   `wifi reload` ne suffit pas.
+**Two mistakes in the script, since fixed (they wasted the first 5 GHz attempt):**
+1. `mesh_fwding` is rejected by `wpa_supplicant` (`unknown network field 'mesh_fwding'`): removed (the kernel forwards by default).
+2. **Replacing the `wpad` package does not change the daemon already running.** The old `wpa_supplicant` (basic variant) rejected mesh mode (`too large mode (value=5 max_value=4)`) until the service was restarted: `swap-*` now runs `/etc/init.d/wpad restart`. `wifi reload` is not enough.
 
-**À retenir** : pour une liaison 5 GHz en vrai pont entre deux Deco OpenWrt, **le WDS est la solution démontrée** ; le maillage 802.11s
-ne l'est que sur le 2,4 GHz. Les deux essais ont duré quelques minutes, Deco côte à côte, sans mesure de stabilité.
+## 802.11s mesh on 5 GHz, channel 36 (no DFS)
 
-## Maillage 802.11s sur le 5 GHz, canal 36 sans DFS (30/10/2026)
+Deco 1 was then connected to the upstream router **by cable** (its 5 GHz radio idle, no longer a Wi-Fi client), both Decos on channel 36 (VHT80), with `wpad-mesh-mbedtls`.
 
-Le Deco 1 était alors relié à la Livebox **par câble** (sa radio 5 GHz libre, plus de client Wi-Fi), les deux Deco sur le canal 36 (VHT80), `wpad-mesh-mbedtls`.
+**5 GHz mesh works.**
+- Peering: `mesh plink: ESTAB`, `MESH-PEER-CONNECTED` on both sides (-58 to -62 dBm), one-hop path, metric 137 (the 2.4 GHz one was 10241; lower is better).
+- `probe`: the foreign MAC `02:77:00:00:00:02` is learned by Deco 1, so it is a real bridge. The first packets had very high latency (2076, 1076, then 76 ms, 2 losses out of 5), probably mesh path discovery (not verified); after that, 19 replies out of 20 (2.2 to 21 ms, average 4.6 ms).
+- **Throughput (iperf3, TCP, one stream, 10 s): 146 Mbit/s (Deco 2 to Deco 1, 264 retransmissions) and 140 Mbit/s (reverse, 0 retransmissions).** Negotiated rate 195 / 175 Mbit/s (`VHT-MCS 4`, one spatial stream in one direction), driver-expected throughput 170 Mbit/s.
 
-**Le maillage 5 GHz fonctionne.**
-- Appairage : `mesh plink: ESTAB`, `MESH-PEER-CONNECTED` des deux côtés (−58 à −62 dBm), chemin d'un saut, métrique 137 (celle du 2,4 GHz était 10241 ; plus bas = meilleur).
-- `probe` : l'adresse MAC étrangère `02:77:00:00:00:02` est apprise par le Deco 1 : pont réel. Les premiers paquets ont eu une latence très élevée (2076, 1076 puis 76 ms, 2 pertes sur 5) : probablement la découverte du chemin par le maillage (non vérifié) ; ensuite 19 réponses sur 20 (2,2 à 21 ms, moyenne 4,6 ms).
-- **Débit (iperf3, TCP, un flux, 10 s) : 146 Mbit/s (Deco 2 vers Deco 1, 264 retransmissions) et 140 Mbit/s (sens inverse, 0 retransmission).**
-  Débit négocié 195 / 175 Mbit/s (`VHT-MCS 4`, un flux spatial dans un sens), débit attendu par le pilote 170 Mbit/s.
+**Comparison with 5 GHz WDS (196 Mbit/s): be careful.** Conditions differ (channel 112 then 36, signal -53 then -58 to -60 dBm, one run each), so the gap cannot be attributed to the protocol. Mesh is in the same order of magnitude, somewhat lower.
 
-**Comparaison avec le WDS 5 GHz (196 Mbit/s) : prudence.** Les conditions diffèrent (canal 112 puis 36, signal −53 puis −58 à −60 dBm, un essai chacun) : on ne peut pas attribuer l'écart au protocole. Le maillage est dans le même ordre de grandeur, un peu en dessous.
+**Cause of the channel 112 failure: still not established.** Between the two tests, **two things changed at once**: the channel (DFS 112, then non-DFS 36) and the radio's role (it carried the Wi-Fi uplink to the upstream router, then no longer). DFS is a reasonable hypothesis, not a demonstrated one. What can be said: mesh established when the radio was free, on a non-DFS channel.
 
-**Cause de l'échec sur le canal 112 : toujours non établie.** Entre les deux essais, **deux choses ont changé en même temps** : le canal (DFS 112 puis non-DFS 36) et le rôle de la radio (elle portait la liaison Wi-Fi vers la Livebox, puis plus). Le DFS est une hypothèse raisonnable, pas démontrée. À retenir : le maillage s'établit quand la radio est libre, sur un canal sans DFS.
+**Takeaway:** for a 5 GHz real-bridge link between two OpenWrt Decos, **WDS is the demonstrated solution**; 802.11s mesh is demonstrated on 2.4 GHz and on 5 GHz channel 36 with an idle radio. All tests lasted a few minutes with the Decos side by side, without stability measurement.
 
-**Essai instable le 29/10 avec la radio chargée (liaison Wi-Fi vers la Livebox + point d'accès + maillage sur le canal 48, sans DFS)** : le Deco 1 est devenu injoignable par intermittence puis complètement, jusqu'à un redémarrage manuel ; aucun journal conservé. Mise en garde : un nœud qui se relie à la Livebox par le Wi-Fi ne doit probablement pas aussi porter un maillage 5 GHz (hypothèse).
+**Unstable test with a loaded radio** (Wi-Fi uplink to the upstream router + access point + mesh on channel 48, no DFS): Deco 1 became intermittently unreachable, then completely so until a manual reboot; no logs were kept. Caution (hypothesis only): a node that connects to the upstream router over Wi-Fi should probably not also carry a 5 GHz mesh.

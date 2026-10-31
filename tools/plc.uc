@@ -1,7 +1,7 @@
 #!/usr/bin/ucode
-// Parle à la puce CPL Broadcom du TP-Link Deco P9 (ethertype 0x8912).
+// Talks to the Broadcom powerline chip of the TP-Link Deco P9 (ethertype 0x8912).
 //   plc.uc get-nmk | set-nmk <32 hex> | pushbutton | sync
-// sync : lit /etc/config/plc (enabled, nmk) et écrit la NMK sur la puce si elle diffère.
+// sync: reads /etc/config/plc (enabled, nmk) and writes the NMK to the chip if it differs.
 import * as socket from "socket";
 import * as fs from "fs";
 import { cursor } from "uci";
@@ -19,7 +19,7 @@ function colon(h) {
 		push(o, substr(h, i, 2));
 	return join(":", o);
 }
-// MAC de la puce = MAC du Deco + 5 (règle du firmware d'origine)
+// Chip MAC = Deco MAC + 5 (rule from the stock firmware)
 function plc_mac(m) {
 	let b = map(split(m, ":"), (x) => hex(x));
 	let carry = 5;
@@ -39,16 +39,16 @@ let seq = time() & 0xff;
 
 let tx = socket.create(socket.AF_PACKET, socket.SOCK_RAW, 0x8912);
 if (!tx || !tx.bind({ family: socket.AF_PACKET, protocol: 0x8912, interface: TX_IF, address: src_mac })) {
-	warn("socket d'envoi: ", socket.error(), "\n");
+	warn("send socket: ", socket.error(), "\n");
 	exit(1);
 }
 let rx = socket.create(socket.AF_PACKET, socket.SOCK_RAW, 0x0003);
 if (!rx || !rx.bind({ family: socket.AF_PACKET, protocol: 0x0003, interface: RX_IF, address: "00:00:00:00:00:00" })) {
-	warn("socket de réception: ", socket.error(), "\n");
+	warn("receive socket: ", socket.error(), "\n");
 	exit(1);
 }
 
-// Renvoie la charge utile (en hexadécimal) de la réponse, ou null.
+// Returns the payload (hex) of the reply, or null.
 function mme(mmtype, payload) {
 	seq = (seq + 1) & 0xff;
 	let frame = dst + src + "8912" + "02" + mmtype + "0000" + "001f84" + sprintf("%02x", seq) + payload;
@@ -64,22 +64,22 @@ function mme(mmtype, payload) {
 		let off = (substr(d, 24, 4) == "8100") ? 8 : 0;
 		if (substr(d, 24 + off, 4) != "8912" || (substr(d, 12, 12) in own))
 			continue;
-		return substr(d, 28 + off + 18);	// après version(1) type(2) 0000 OUI(3) seq(1)
+		return substr(d, 28 + off + 18);	// after version(1) type(2) 0000 OUI(3) seq(1)
 	}
 	return null;
 }
 
 function get_nmk() {
 	let r = mme("5ca0", "2400");
-	// r : statut(1) longueur(2, LE) NMK(16)
+	// r: status(1) length(2, LE) NMK(16)
 	if (!r || substr(r, 0, 2) != "01" || substr(r, 2, 4) != "1000")
 		return null;
 	return substr(r, 6, 32);
 }
 
-// Écrit la NMK et vérifie par relecture. La puce répond souvent tard (parfois après le
-// délai d'attente) à une écriture réussie : l'absence d'accusé n'est donc pas une erreur,
-// seule la relecture compte.
+// Writes the NMK and verifies it by reading it back. The chip often replies late
+// (sometimes after the timeout) to a successful write: a missing acknowledgement is
+// therefore not an error, only the read-back counts.
 function write_nmk(n) {
 	mme("18a0", n + "0000");
 	sleep(SET_NMK_DELAY * 1000);
@@ -96,24 +96,24 @@ let cmd = ARGV[0];
 if (cmd == "get-nmk") {
 	let n = get_nmk();
 	if (!n) {
-		warn("pas de réponse (après une écriture, attendre 5 s)\n");
+		warn("no reply (after a write, wait 5 s)\n");
 		exit(1);
 	}
 	print(n, "\n");
 } else if (cmd == "set-nmk") {
 	let n = lc(ARGV[1] ?? "");
 	if (!match(n, /^[0-9a-f]{32}$/)) {
-		warn("set-nmk attend 32 caractères hexadécimaux\n");
+		warn("set-nmk expects 32 hexadecimal characters\n");
 		exit(1);
 	}
 	if (!write_nmk(n)) {
-		warn("la NMK relue ne correspond pas à celle écrite\n");
+		warn("the NMK read back does not match the one written\n");
 		exit(1);
 	}
-	print("NMK écrite et relue : ", n, "\n");
+	print("NMK written and verified: ", n, "\n");
 } else if (cmd == "pushbutton") {
 	let r = mme("8ca0", "00");
-	print("réponse : ", r ?? "aucune", "\n");
+	print("reply: ", r ?? "none", "\n");
 } else if (cmd == "sync") {
 	function log(msg) {
 		system([ "/usr/bin/logger", "-t", "plc", msg ]);
@@ -122,14 +122,14 @@ if (cmd == "get-nmk") {
 	let uci = cursor();
 	let want = lc(uci.get("plc", "main", "nmk") ?? "");
 	if (uci.get("plc", "main", "enabled") != "1") {
-		log("désactivé (plc.main.enabled != 1)");
+		log("disabled (plc.main.enabled != 1)");
 		exit(0);
 	}
 	if (!match(want, /^[0-9a-f]{32}$/)) {
-		log("plc.main.nmk absente ou invalide : 32 caractères hexadécimaux attendus");
+		log("plc.main.nmk missing or invalid: 32 hexadecimal characters expected");
 		exit(1);
 	}
-	// La puce peut mettre du temps à répondre après le démarrage.
+	// The chip can take a while to reply after boot.
 	let cur = null;
 	for (let i = 0; i < 24 && !cur; i++) {
 		cur = get_nmk();
@@ -137,19 +137,19 @@ if (cmd == "get-nmk") {
 			sleep(5000);
 	}
 	if (!cur) {
-		log("la puce CPL ne répond pas, NMK inchangée");
+		log("the powerline chip does not reply, NMK unchanged");
 		exit(1);
 	}
 	if (cur == want) {
-		log("NMK déjà à jour");
+		log("NMK already up to date");
 		exit(0);
 	}
 	if (!write_nmk(want)) {
-		log("la NMK relue ne correspond pas à celle écrite");
+		log("the NMK read back does not match the one written");
 		exit(1);
 	}
-	log("NMK écrite et relue");
+	log("NMK written and verified");
 } else {
-	warn("usage : plc.uc get-nmk | set-nmk <32 hex> | pushbutton | sync\n");
+	warn("usage: plc.uc get-nmk | set-nmk <32 hex> | pushbutton | sync\n");
 	exit(1);
 }

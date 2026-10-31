@@ -1,0 +1,7 @@
+# Fill in these two lines with YOUR Orange credentials (customer account, not Wi-Fi).
+# NEVER COMMIT this file with real values: keep it out of git once filled in
+# (it is in .gitignore under this name once copied to the Deco, but check before committing).
+LOGIN="your_orange_login_without_fti_slash"
+PASSWORD="your_orange_password"
+BYTE="A"
+SALT_PREFIX="1234567890123"

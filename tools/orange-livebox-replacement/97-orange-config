@@ -1,0 +1,10 @@
+#!/bin/sh
+# Installation on the Deco:
+#   ln -s /etc/config/97-orange-config /etc/hotplug.d/iface/97-orange-config
+case "$ACTION/$INTERFACE" in
+    ifdown/wan)
+        logger -t orange-config "wan down, regenerating the token before the next connection"
+        /etc/config/orange-gen-auth.sh
+        ifdown wan6
+        ;;
+esac
