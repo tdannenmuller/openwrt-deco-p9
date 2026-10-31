@@ -70,7 +70,7 @@ What it does, in order:
 - Physical cabling.
 - A frozen device (one device froze until a manual reboot during testing).
 - IPv6 (`wan6` not configured, `odhcpd` untouched).
-- Token renewal (5 to 8 weeks according to community sources): `orange-gen-auth.sh` and `97-orange-config` in this folder edit the configuration directly and were not adapted to this flow. Token renewal is untested.
+- Token renewal (5 to 8 weeks according to community sources): `orange-gen-auth.sh` and `97-orange-config` in this folder edit the configuration directly and were not adapted to this flow. `to-router.uc renew` is the replacement (see "Token commands" below); it is untested on a live line.
 - DHCP reservations and static addresses that lived on the Livebox.
 
 ### Procedure and checklist (D-day)
@@ -78,7 +78,7 @@ What it does, in order:
 Before:
 1. **Independent internet for your working session**: for example a laptop on a phone hotspot over Wi-Fi, plus an Ethernet adapter to a LAN port of the router (manual IP `192.168.0.10`, no gateway). Without this, your session loses internet during the test.
 2. Note the Livebox MAC address (label) as `<livebox-mac>`, and keep the Livebox next to you with its cables. Pick a short window when nobody needs internet.
-3. Copy to the router: `to-router.uc` (in `/root/`), `orange-gen-auth.sh`, and create `/etc/config/orange-auth` (Orange credentials, **never committed**).
+3. Copy to the router: `to-router.uc` (in `/root/`), `orange-gen-auth.sh`, and create `/etc/config/orange-auth` (Orange credentials, **never committed**). Then run `verify-token` if you already have a token (see "Token commands").
 4. Decide about the **password**: try first with a dummy value (this README cannot claim that Orange still checks it; see the test results below).
 5. `AUTH_ONLY=1 sh orange-gen-auth.sh` to get the token, then `ucode /root/to-router.uc convert mac=<livebox-mac> auth=<token>` (without `go=yes`: prints the plan).
 
@@ -92,6 +92,32 @@ On the day:
 ### Known gaps to validate on a real line
 
 802.1p priority on the wire at the WAN port, Orange's acceptance of the token, IPv6, TV set-top box and landline phone (not covered), and whether `192.168.0.1` suits your network (devices with static addresses; DHCP range `100` to `249` to be confirmed).
+
+## Token commands and the priority service
+
+All of these are subcommands of `ucode /root/to-router.uc`. They read the credentials from `/etc/config/orange-auth` (or `creds=<file>`), which **you** create on the router with mode 600; the password is never printed, logged or passed on the command line. Create the file without leaving the password in your shell history:
+
+```sh
+umask 077
+printf 'Login (without fti/): '; read L
+printf 'Password: '; stty -echo; read P; stty echo; echo
+printf 'LOGIN="%s"\nPASSWORD="%s"\nBYTE="A"\n' "$L" "$P" > /etc/config/orange-auth
+unset L P
+```
+A double quote inside the password is not supported by the file reader. `/etc/config/` is kept by a sysupgrade, so the file survives it; treat configuration backups as sensitive (they also contain the token).
+
+| Command | What it does | Status |
+|---|---|---|
+| `selftest-token` | Builds a token from dummy data, parses it back and recomputes the MD5. No secret involved. | passes on one device |
+| `verify-token` | Recomputes the MD5 of the token stored in `network.wan.sendopts` (option 90) with the password of the file, and compares. Prints only whether the login matches and whether the MD5 is identical. Use it to check your password and the formula without touching the line. | on one device the stored real token was identical to the computed one |
+| `renew [go=yes] [timeout=120]` | Builds a new token (random printable 16-character salt and random byte, like a real Livebox) and applies it to `network.wan.sendopts` with rpcd rollback. Without `go=yes` it only says what it would do. Confirm by hand with `confirm` once the lease is public. | **untested**: it replaces the token of a live line, so it needs the ONT and a way back |
+| `install-prio` | Installs the `orange-prio` service (nft rules marking control traffic at 802.1p priority 6, see the measurements below) on an already converted router, enables it at boot and lists its two files in `/etc/sysupgrade.conf` so that a sysupgrade keeps them. | loads the rules, present after a reboot |
+| `remove-prio` | Removes the service and its files (the `/etc/sysupgrade.conf` lines stay). | untested |
+
+Notes:
+- A sysupgrade keeps `/etc/config` but not files you added elsewhere. `convert` installs `orange-prio` itself; after flashing a new image on a router that was already converted, run `install-prio` again (or keep the files listed in `/etc/sysupgrade.conf`).
+- Two bugs were fixed when these commands were tested: the init script must not set `USE_PROCD=0` (`rc.common` tests whether the variable is non-empty), and ucode has no `.map()` method.
+- Method used to confirm that the password is right without sharing it: store the password in the file, run `verify-token`, read "IDENTICAL". The token stored on the router was the one replayed from the real box, so this also validates the formula.
 
 ## Real test results and lessons (Oct 2026, one FTTH line)
 
