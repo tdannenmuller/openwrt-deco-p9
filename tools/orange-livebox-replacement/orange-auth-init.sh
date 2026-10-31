@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Installation sur le Deco :
+# Installation on the Deco:
 #   ln -s /etc/config/orange-auth-init.sh /etc/init.d/orange-auth
 #   /etc/init.d/orange-auth enable
 START=09

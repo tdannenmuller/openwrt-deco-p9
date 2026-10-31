@@ -1,33 +1,33 @@
 #!/usr/bin/ucode
-// Convertit un Deco (pont / point d'accès) en routeur derrière l'ONT Orange, avec annulation automatique.
+// Converts a Deco (bridge / access point) into a router behind the Orange ONT, with automatic rollback.
 //
-//   to-router.uc plan    [full=1] [clé=valeur ...]   affiche ce qui serait modifié, ne touche à rien
-//   to-router.uc check   [clé=valeur ...]            met en attente toutes les modifications de la conversion complète puis les
-//                                                    ANNULE (« uci revert ») : vérifie qu'elles sont valides, sans rien appliquer
-//   to-router.uc dry-run [clé=valeur ...]            applique SEULEMENT le VLAN du commutateur et l'interface WAN, annulation
-//                                                    automatique après « timeout » s (jamais confirmée) : sert à voir ce qui part sur
-//                                                    le fil, sans ONT. Ne change ni l'adresse LAN ni le DHCP.
-//   to-router.uc convert mac=.. auth=.. go=yes [clé=valeur ...]
-//                                                    conversion COMPLÈTE en routeur. Sans « go=yes » : affiche le plan et s'arrête.
-//   to-router.uc restore [reload=no]                 revient à la configuration d'avant « convert » (sauvegarde dans /root/backup-router)
-//   to-router.uc confirm | rollback-now             confirme / annule à la main le dernier « apply » (convert, tap), via la session mémorisée
-//   to-router.uc guard   [lan_ip=..]                 dit si « lan_ip » répond déjà (ce que convert vérifie avant de toucher à quoi que ce soit)
-//   to-router.uc selftest                            lit les vérifications de succès de convert (wan, ping, DNS) et l'état des services
-//   to-router.uc tap go=yes [ont_port=3 livebox_port=5 timeout=900]   VLAN 832 transparent ONT <-> Livebox (pour capturer ce que la Livebox envoie) ; untap l'annule
-//   to-router.uc diag                                état du VLAN, de l'interface WAN et du périphérique
+//   to-router.uc plan    [full=1] [key=value ...]   shows what would be changed, touches nothing
+//   to-router.uc check   [key=value ...]            stages all the changes of the full conversion, then
+//                                                    REVERTS them ("uci revert"): checks that they are valid, applies nothing
+//   to-router.uc dry-run [key=value ...]            applies ONLY the switch VLAN and the WAN interface, with automatic rollback
+//                                                    after "timeout" s (never confirmed): used to see what goes out on the
+//                                                    wire, without an ONT. Changes neither the LAN address nor DHCP.
+//   to-router.uc convert mac=.. auth=.. go=yes [key=value ...]
+//                                                    FULL conversion to a router. Without "go=yes": shows the plan and stops.
+//   to-router.uc restore [reload=no]                 goes back to the configuration from before "convert" (backup in /root/backup-router)
+//   to-router.uc confirm | rollback-now             confirms / cancels by hand the last "apply" (convert, tap), via the stored session
+//   to-router.uc guard   [lan_ip=..]                 tells whether "lan_ip" already answers (what convert checks before touching anything)
+//   to-router.uc selftest                            reads convert's success checks (wan, ping, DNS) and the state of the services
+//   to-router.uc tap go=yes [ont_port=3 livebox_port=5 timeout=900]   transparent VLAN 832 ONT <-> Livebox (to capture what the Livebox sends); untap cancels it
+//   to-router.uc diag                                state of the VLAN, the WAN interface and the device
 //
-// Paramètres (clé=valeur) :
-//   wan_port=3  vid=832  timeout=90 (dry-run) / 300 (convert)  qos=1 (dry-run : marquage 802.1p ; toujours actif en convert)
-//   mac=<MAC de la Livebox remplacée>  auth=<option 90, hexadécimal séparé par « : »>   (obligatoires pour convert)
-//   lan_ip=192.168.0.1  netmask=255.255.255.0  dhcp_start=100  dhcp_limit=150  force_link=1 (dry-run, test sans câble)
+// Parameters (key=value):
+//   wan_port=3  vid=832  timeout=90 (dry-run) / 300 (convert)  qos=1 (dry-run: 802.1p marking; always on in convert)
+//   mac=<MAC of the replaced Livebox>  auth=<option 90, hexadecimal separated by ":">   (required for convert)
+//   lan_ip=192.168.0.1  netmask=255.255.255.0  dhcp_start=100  dhcp_limit=150  force_link=1 (dry-run, test without a cable)
 //
-// convert, dans l'ordre : refuse (sans rien toucher) si mac/auth manquent, si « lan_ip » répond déjà (la Livebox est encore là),
-// puis met en attente VLAN + WAN + LAN + DHCP, applique avec rollback rpcd, active et redémarre dnsmasq et firewall, et ne CONFIRME que si
-// l'interface wan a un bail IPv4, qu'un ping vers 1.1.1.1 passe et que le DNS résout (deux fois de suite). Sinon rpcd restaure la
-// configuration au bout du délai, et le script remet dnsmasq et firewall dans leur état d'avant. Journal : /root/to-router.log et
-// « logread -e to-router ».
+// convert, in order: refuses (touching nothing) if mac/auth are missing or if "lan_ip" already answers (the Livebox is still there),
+// then stages VLAN + WAN + LAN + DHCP, applies with rpcd rollback, enables and restarts dnsmasq and firewall, and only CONFIRMS if
+// the wan interface has an IPv4 lease, a ping to 1.1.1.1 succeeds and DNS resolves (twice in a row). Otherwise rpcd restores the
+// configuration when the timeout expires, and the script puts dnsmasq and firewall back in their previous state. Log: /root/to-router.log and
+// "logread -e to-router".
 //
-// Ne couvre PAS : les branchements physiques, un Deco figé, l'IPv6 (wan6 non configuré), odhcpd. JAMAIS exécuté avec une vraie ligne Orange.
+// Does NOT cover: the physical wiring, a frozen Deco, IPv6 (wan6 not configured), odhcpd. NEVER run with a real Orange line.
 import * as ubus from "ubus";
 import * as fs from "fs";
 import { cursor } from "uci";
@@ -37,19 +37,19 @@ let opts = {
 	lan_ip: "192.168.0.1", netmask: "255.255.255.0", dhcp_start: "100", dhcp_limit: "150",
 	qos: "", force_link: "", go: "", force: "", full: ""
 };
-// « Livebox4 » : option 77 = longueur (0x2b) + « FSVDSL_livebox.Internet.softathome.Livebox4 »
+// "Livebox4": option 77 = length (0x2b) + "FSVDSL_livebox.Internet.softathome.Livebox4"
 const USERCLASS77 = "2b46535644534c5f6c697665626f782e496e7465726e65742e736f66746174686f6d652e4c697665626f7834";
-// jeton factice (plan, check, dry-run) : sert seulement à voir le format de l'option sur le fil. Pas un vrai jeton Orange.
+// dummy token (plan, check, dry-run): only used to see the option format on the wire. Not a real Orange token.
 const DUMMY_AUTH = "00:00:00:00:00:00:00:00:00:00:00:1a:09:00:00:05:58:01:03:41:01:0b:66:74:69:2f:74:65:73:74:65:75:72";
 const DUMMY_MAC = "02:00:00:00:00:00";
-// Priorité 802.1p sur le VLAN WAN. MESURÉ (iperf3, 4 flux) : avec TOUT le trafic en priorité 6, l'émission est bridée (4,5 Mbit/s) ;
-// avec les données en priorité 0 elle atteint 218 Mbit/s. Le mapping du périphérique est donc « 6:6 » seul (les données, priorité 0, sortent
-// en 0 sur le fil, y compris les flux accélérés par flow offloading qui ne passent plus par netfilter) ; ces règles ne marquent en 6 que le
-// contrôle généré par le Deco lui-même. La demande DHCP broadcast de udhcpc (socket brut, invisible pour nft) part en 0 : Orange l'a acceptée
-// (bail obtenu) et l'émission n'a pas été bridée (mesuré une fois).
+// 802.1p priority on the WAN VLAN. MEASURED (iperf3, 4 streams): with ALL traffic at priority 6, transmit is throttled (4.5 Mbit/s);
+// with data at priority 0 it reaches 218 Mbit/s. The device mapping is therefore "6:6" alone (data, priority 0, goes out
+// at 0 on the wire, including flows accelerated by flow offloading which no longer go through netfilter); these rules only mark as 6 the
+// control traffic generated by the Deco itself. udhcpc's broadcast DHCP request (raw socket, invisible to nft) goes out at 0: Orange accepted it
+// (lease obtained) and transmit was not throttled (measured once).
 function prio_nft(eth) {
-	return `# Priorité 802.1p sur ${eth} (VLAN WAN d'Orange) : le mapping du périphérique ne traduit que 6 vers 6, les données sortent donc en 0.
-# Ces règles ne marquent en 6 que le contrôle local (ICMP, IGMP, DHCP unicast). Tout en 6 bride l'émission vers 4 Mbit/s (mesuré).
+	return `# 802.1p priority on ${eth} (Orange's WAN VLAN): the device mapping only translates 6 to 6, so data goes out at 0.
+# These rules only mark local control traffic (ICMP, IGMP, unicast DHCP) as 6. Everything at 6 throttles transmit to about 4 Mbit/s (measured).
 add table inet orange_prio
 delete table inet orange_prio
 table inet orange_prio {
@@ -62,7 +62,7 @@ table inet orange_prio {
 `;
 }
 const PRIO_INIT = `#!/bin/sh /etc/rc.common
-# Charge les règles de priorité 802.1p du VLAN WAN d'Orange (voir /etc/orange-prio.nft). Installé par to-router.uc.
+# Loads the 802.1p priority rules for Orange's WAN VLAN (see /etc/orange-prio.nft). Installed by to-router.uc.
 START=99
 USE_PROCD=0
 start() { nft -f /etc/orange-prio.nft; }
@@ -82,8 +82,8 @@ function prio_remove() {
 	system("rm -f /etc/orange-prio.nft /etc/init.d/orange-prio");
 }
 
-// option 125 (vendor-specific) envoyée par une vraie Livebox 4 (capturée le 30/10/2026) : entreprise 0x558, sous-option 2.
-// Contenu non compris ; reprise telle quelle pour que la requête ressemble à celle de la Livebox.
+// option 125 (vendor-specific) sent by a real Livebox 4 (captured on 30/10/2026): enterprise 0x558, sub-option 2.
+// Contents not understood; reproduced as-is so that the request looks like the Livebox's.
 const OPT125 = "000005580c020a1c0000ffffffffffffff";
 
 let cmd = shift(ARGV);
@@ -104,10 +104,10 @@ function log(msg) {
 	let f = fs.open(LOG, "a");
 	if (f) { f.write(ts() + " " + msg + "\n"); f.close(); }
 }
-function die(msg) { warn("ERREUR : ", msg, "\n"); exit(1); }
+function die(msg) { warn("ERROR: ", msg, "\n"); exit(1); }
 
 let conn = ubus.connect();
-if (!conn) die("ubus indisponible");
+if (!conn) die("ubus unavailable");
 
 function call(obj, method, args) {
 	let r = conn.call(obj, method, args);
@@ -116,7 +116,7 @@ function call(obj, method, args) {
 	return r;
 }
 
-// --- état actuel (lecture directe, sans session) ---
+// --- current state (direct read, no session) ---
 let c = cursor();
 c.load("network");
 c.load("dhcp");
@@ -127,9 +127,9 @@ function ports_without(vlan_section, port) {
 	return filter(split(p, " "), (x) => replace(x, /[a-z]/g, "") != port);
 }
 
-// --- opérations à effectuer, dans l'ordre ---
-// chaque élément : [méthode, arguments]. « plan » les affiche, les autres les exécutent.
-// full = true : ajoute l'adresse LAN et le serveur DHCP (conversion complète).
+// --- operations to perform, in order ---
+// each element: [method, arguments]. "plan" displays them, the other commands execute them.
+// full = true: adds the LAN address and the DHCP server (full conversion).
 function build_ops(full, mac, auth) {
 	let ops = [];
 	let v1 = null, used = {};
@@ -139,7 +139,7 @@ function build_ops(full, mac, auth) {
 			v1 = s[".name"];
 	});
 	if (!v1)
-		die("VLAN 1 du commutateur introuvable dans /etc/config/network");
+		die("switch VLAN 1 not found in /etc/config/network");
 	let idx = 2;
 	while (used[idx])
 		idx++;
@@ -149,40 +149,40 @@ function build_ops(full, mac, auth) {
 	push(ops, ["set", { config: "network", section: v1, values: { ports: join(" ", ports_without(v1, opts.wan_port)) } }]);
 	push(ops, ["add", { config: "network", type: "switch_vlan", name: "wan_vlan", values: {
 		device: "switch0", vlan: "" + idx, vid: opts.vid, ports: "0t " + opts.wan_port + "t" } }]);
-	// priorité 802.1p : sans « type/ifname/vid » la section est ignorée (vérifié : p 0 sur le fil). Mapping « 6:6 » seul : voir prio_nft
+		// 802.1p priority: without "type/ifname/vid" the section is ignored (verified: p 0 on the wire). Mapping "6:6" alone: see prio_nft
 	if (full || opts.qos == "1")
 		push(ops, ["add", { config: "network", type: "device", name: "wan_dev", values: {
 			name: eth, type: "8021q", ifname: "eth0", vid: opts.vid,
-			// adresse MAC de la Livebox sur le fil (le « macaddr » de l'interface est ignoré quand le périphérique a sa propre section)
+			// Livebox MAC address on the wire (the interface's "macaddr" is ignored when the device has its own section)
 			macaddr: mac,
 			egress_qos_mapping: [ "6:6" ] } }]);
 	let wan = {
 		proto: "dhcp", device: eth, auto: "1",
-		// la vraie Livebox n'envoie PAS de nom d'hôte (option 12) : « * » le supprime. classlessroute=0 retire l'option 121 des options
-		// demandées (la Livebox en demande 12 : 1 3 6 15 28 51 58 59 90 119 120 125)
+		// the real Livebox does NOT send a hostname (option 12): "*" removes it. classlessroute=0 removes option 121 from the requested
+		// options (the Livebox requests 12: 1 3 6 15 28 51 58 59 90 119 120 125)
 		hostname: "*", classlessroute: "0", vendorid: "sagem",
 		clientid: "01" + mac_nc,
-		// defaultreqopts=0 : sinon netifd ajoute 12 et 42 à la liste d'options demandées (vu sur le fil)
+		// defaultreqopts=0: otherwise netifd adds 12 and 42 to the list of requested options (seen on the wire)
 		defaultreqopts: "0", reqopts: "1 3 6 15 28 51 58 59 90 119 120 125",
 		sendopts: [ "77:" + USERCLASS77, "90:" + auth, "125:" + OPT125 ]
 	};
 	if (!(full || opts.qos == "1"))
 		wan.macaddr = mac;
-	// force_link=1 : démarre le client DHCP même sans câble (test sans ONT seulement)
+	// force_link=1: starts the DHCP client even without a cable (test without an ONT only)
 	if (!full && opts.force_link == "1")
 		wan.force_link = "1";
 	push(ops, ["add", { config: "network", type: "interface", name: "wan", values: wan }]);
 
 	if (full) {
-		// le Deco devient la passerelle : adresse LAN de la Livebox, plus de passerelle ni de DNS statiques sur le LAN
+		// the Deco becomes the gateway: Livebox LAN address, no more static gateway or DNS on the LAN
 		push(ops, ["set", { config: "network", section: "lan", values: { ipaddr: opts.lan_ip, netmask: opts.netmask } }]);
 		let del = filter([ "gateway", "dns" ], (o) => c.get("network", "lan", o) != null);
 		if (length(del))
 			push(ops, ["delete", { config: "network", section: "lan", options: del }]);
-		// accélération logicielle des flux : mesuré 339-361 -> 818-850 Mbit/s en réception depuis un client filaire (le processeur du Deco était le
-		// plafond). Compatible avec le mapping 6:6 : les flux accélérés ne portent aucune priorité. Voir README.
+		// software flow acceleration: measured 339-361 -> 818-850 Mbit/s receiving from a wired client (the Deco's processor was the
+		// ceiling). Compatible with the 6:6 mapping: accelerated flows carry no priority. See README.
 		push(ops, ["set", { config: "firewall", section: "@defaults[0]", values: { flow_offloading: "1" } }]);
-		// serveur DHCP du LAN
+		// LAN DHCP server
 		push(ops, ["set", { config: "dhcp", section: "lan", values: {
 			ignore: "0", start: opts.dhcp_start, limit: opts.dhcp_limit, leasetime: "12h", dhcpv4: "server" } }]);
 	}
@@ -212,19 +212,19 @@ function stage(sid, ops) {
 	}
 }
 
-// la session qui a lancé « apply » est la seule à pouvoir confirmer ou annuler : on la mémorise pour « confirm » et « untap »
+// the session that launched "apply" is the only one that can confirm or cancel: we store it for "confirm" and "untap"
 const SIDFILE = "/tmp/to-router.sid";
 function remember(sid) { fs.writefile(SIDFILE, sid); }
 function recall() {
 	let s = fs.readfile(SIDFILE);
-	if (!s) die("aucune session mémorisée (" + SIDFILE + ") : rien à confirmer ou annuler");
+		if (!s) die("no stored session (" + SIDFILE + "): nothing to confirm or cancel");
 	return trim(s);
 }
 
 function service_enabled(name) { return system([ "/etc/init.d/" + name, "enabled" ]) == 0; }
 function service(name, action) { return system([ "/etc/init.d/" + name, action ]); }
 
-// --- vérifications de succès de la conversion ---
+// --- conversion success checks ---
 function wan_ok() {
 	let r = conn.call("network.interface.wan", "status", {});
 	return r && r.up && length(r["ipv4-address"] ?? []) > 0;
@@ -233,66 +233,66 @@ function net_ok() {
 	return system("ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1") == 0 && system("nslookup openwrt.org >/dev/null 2>&1") == 0;
 }
 
-// la Livebox (ou autre) répond-elle déjà à l'adresse que va prendre ce Deco ?
+// does the Livebox (or anything else) already answer at the address this Deco is going to take?
 function lan_ip_taken() { return system(`ping -c 2 -W 2 '${opts.lan_ip}' >/dev/null 2>&1`) == 0; }
 
 function convert_run() {
 	let timeout = int(opts.timeout || "300");
 	let ops = build_ops(true, opts.mac, opts.auth);
 	let dnsmasq_was = service_enabled("dnsmasq"), firewall_was = service_enabled("firewall");
-	log(`convert : début (dnsmasq actif au démarrage=${dnsmasq_was}, firewall=${firewall_was}, annulation dans ${timeout} s)`);
+	log(`convert: start (dnsmasq enabled at boot=${dnsmasq_was}, firewall=${firewall_was}, rollback in ${timeout} s)`);
 
-	// sauvegarde pour « restore » (retour en arrière APRÈS une confirmation, par exemple si la Livebox revient)
+	// backup for "restore" (going back AFTER a confirmation, for example if the Livebox comes back)
 	system("mkdir -p /root/backup-router && cp /etc/config/network /etc/config/dhcp /root/backup-router/");
 	fs.writefile("/root/backup-router/services", `dnsmasq=${dnsmasq_was ? 1 : 0}\nfirewall=${firewall_was ? 1 : 0}\n`);
 	let sid = open_session(timeout + 900);
 	remember(sid);
 	stage(sid, ops);
-	log("convert : modifications en attente, application avec rollback (session mémorisée : « to-router.uc confirm » peut confirmer)");
+	log("convert: changes staged, applying with rollback (stored session: \"to-router.uc confirm\" can confirm)");
 	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
 	let t0 = time();
-	log("convert : apply retourné");
+	log("convert: apply returned");
 
-	// services : non couverts par le rollback de rpcd
-	service("dnsmasq", "enable"); log("convert : dnsmasq enable fait");
-	service("dnsmasq", "restart"); log("convert : dnsmasq restart fait");
-	service("firewall", "enable"); log("convert : firewall enable fait");
-	service("firewall", "restart"); log("convert : firewall restart fait");
-	prio_install(); log("convert : règles de priorité 802.1p installées (service orange-prio)");
+	// services: not covered by rpcd's rollback
+	service("dnsmasq", "enable"); log("convert: dnsmasq enable done");
+	service("dnsmasq", "restart"); log("convert: dnsmasq restart done");
+	service("firewall", "enable"); log("convert: firewall enable done");
+	service("firewall", "restart"); log("convert: firewall restart done");
+	prio_install(); log("convert: 802.1p priority rules installed (orange-prio service)");
 
 	let good = 0, confirmed = false;
 	try {
 		while (time() - t0 < timeout - 25) {
 			sleep(5000);
 			let w = wan_ok(), n = w ? net_ok() : false;
-			log(`convert : t+${time() - t0} s wan_ok=${w} net_ok=${n}`);
+			log(`convert: t+${time() - t0} s wan_ok=${w} net_ok=${n}`);
 			if (w && n) {
 				if (++good >= 2) {
 					call("uci", "confirm", { ubus_rpc_session: sid });
 					confirmed = true;
-					log("convert : bail WAN, ping 1.1.1.1 et DNS OK deux fois de suite : CONFIRMÉ");
+					log("convert: WAN lease, ping 1.1.1.1 and DNS OK twice in a row: CONFIRMED");
 					break;
 				}
 			} else
 				good = 0;
 		}
 	} catch (e) {
-		log("convert : EXCEPTION dans la boucle d'attente : " + e);
+		log("convert: EXCEPTION in the wait loop: " + e);
 	}
 	if (!confirmed) {
-		log("convert : WAN ou Internet KO dans le délai : pas de confirmation, rpcd va annuler la configuration");
+		log("convert: WAN or Internet down within the timeout: no confirmation, rpcd will roll back the configuration");
 		sleep((timeout - (time() - t0) + 20) * 1000);
-		// la configuration est restaurée : remettre les services dans leur état d'avant
+		// the configuration is restored: put the services back in their previous state
 		if (!dnsmasq_was) { service("dnsmasq", "stop"); service("dnsmasq", "disable"); } else service("dnsmasq", "restart");
 		if (!firewall_was) { service("firewall", "stop"); service("firewall", "disable"); } else service("firewall", "restart");
 		prio_remove();
-		log("convert : ANNULÉ, services remis dans leur état d'avant ; remettre les câbles d'origine (Livebox sur l'ONT)");
+		log("convert: ROLLED BACK, services put back in their previous state; put the original cables back (Livebox on the ONT)");
 	}
 }
 
 switch (cmd) {
 case "plan":
-	print("Opérations qui seraient mises en attente puis appliquées (rien n'est modifié par « plan ») :\n");
+	print("Operations that would be staged then applied (nothing is modified by \"plan\"):\n");
 	show_ops(build_ops(opts.full == "1", opts.mac || DUMMY_MAC, opts.auth || DUMMY_AUTH));
 	break;
 
@@ -302,10 +302,10 @@ case "check": {
 	stage(sid, ops);
 	for (let cfg in [ "network", "dhcp", "firewall" ]) {
 		let r = call("uci", "changes", { config: cfg, ubus_rpc_session: sid });
-		print("  ", cfg, " : ", length(r.changes ?? []), " opération(s) valide(s) mise(s) en attente\n");
+		print("  ", cfg, ": ", length(r.changes ?? []), " valid operation(s) staged\n");
 		call("uci", "revert", { config: cfg, ubus_rpc_session: sid });
 	}
-	print("après revert, changements restants : ", system("uci changes | grep -q .") == 0 ? "OUI (anormal)" : "aucun", "\n");
+	print("after revert, remaining changes: ", system("uci changes | grep -q .") == 0 ? "YES (abnormal)" : "none", "\n");
 	break;
 }
 
@@ -315,35 +315,35 @@ case "dry-run": {
 	let sid = open_session(timeout + 600);
 	stage(sid, ops);
 	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
-	print(`appliqué ; annulation automatique dans ${timeout} s (aucune confirmation n'est envoyée en dry-run)\n`);
+	print(`applied; automatic rollback in ${timeout} s (no confirmation is sent in dry-run)\n`);
 	break;
 }
 
 case "convert": {
 	if (!opts.mac || !opts.auth)
-		die("mac=<MAC de la Livebox> et auth=<option 90> sont obligatoires pour convert");
+		die("mac=<Livebox MAC> and auth=<option 90> are required for convert");
 	if (!match(opts.mac, /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
-		die("mac au format AA:BB:CC:DD:EE:FF attendu");
+		die("mac in the format AA:BB:CC:DD:EE:FF expected");
 	if (opts.go != "yes") {
-		print("Conversion COMPLÈTE : voici ce qui serait fait. Rien n'est modifié sans go=yes.\n");
+		print("FULL conversion: here is what would be done. Nothing is modified without go=yes.\n");
 		show_ops(build_ops(true, opts.mac, opts.auth));
 		break;
 	}
-	// garde-fou : la Livebox répond-elle encore à l'adresse que va prendre ce Deco ?
+	// safeguard: does the Livebox still answer at the address this Deco is going to take?
 	if (opts.force != "yes" && lan_ip_taken())
-		die(`${opts.lan_ip} répond déjà (la Livebox est-elle encore branchée sur le réseau ?). Rien n'a été modifié. force=yes pour passer outre.`);
-	// lancement détaché : l'adresse LAN change et coupe la session SSH ; le script doit survivre
+		die(`${opts.lan_ip} already answers (is the Livebox still plugged into the network?). Nothing was modified. force=yes to override.`);
+	// detached launch: the LAN address changes and cuts the SSH session; the script must survive
 	let args = join(" ", map(keys(opts), (k) => opts[k] != "" ? `${k}='${opts[k]}'` : ""));
 	system(`setsid ucode /root/to-router.uc convert-run ${args} </dev/null >>${LOG} 2>&1 &`);
-	print("conversion lancée en arrière-plan ; suivre : tail -f " + LOG + " ou logread -e to-router\n");
+	print("conversion started in the background; follow with: tail -f " + LOG + " or logread -e to-router\n");
 	break;
 }
 
 case "restore": {
-	// revient à la configuration d'avant « convert » (réseau, DHCP, dnsmasq, firewall). Ne remet PAS les câbles.
+		// goes back to the configuration from before "convert" (network, DHCP, dnsmasq, firewall). Does NOT put the cables back.
 	const B = "/root/backup-router";
 	if (!fs.access(B + "/network") || !fs.access(B + "/dhcp") || !fs.access(B + "/services"))
-		die("pas de sauvegarde dans " + B + " (convert n'a jamais été lancé ici)");
+			die("no backup in " + B + " (convert was never run here)");
 	system(`cp ${B}/network ${B}/dhcp /etc/config/`);
 	let was = {};
 	for (let l in split(fs.readfile(B + "/services"), "\n")) {
@@ -357,24 +357,24 @@ case "restore": {
 	prio_remove();
 	if (opts.reload != "no")
 		system("/etc/init.d/network reload");
-	log(`restore : configuration d'avant convert remise (dnsmasq=${was.dnsmasq}, firewall=${was.firewall}) ; remettre les câbles d'origine`);
+		log(`restore: pre-convert configuration restored (dnsmasq=${was.dnsmasq}, firewall=${was.firewall}); put the original cables back`);
 	break;
 }
 
 case "tap":
 case "untap": {
-	// Pont transparent du VLAN 832 entre l'ONT (ont_port) et la Livebox (livebox_port), le processeur en tiers : permet de CAPTURER
-	// ce que la vraie Livebox envoie (options DHCP, option 90, priorité 802.1p) sans que le Deco ne s'en mêle. Annulation automatique.
+		// Transparent VLAN 832 bridge between the ONT (ont_port) and the Livebox (livebox_port), the processor as a third party: allows CAPTURING
+		// what the real Livebox sends (DHCP options, option 90, 802.1p priority) without the Deco getting involved. Automatic rollback.
 	let ont = opts.ont_port || "3", lb = opts.livebox_port || "5";
 	let timeout = int(opts.timeout || "900");
 	if (cmd == "untap") {
 		call("uci", "rollback", { ubus_rpc_session: recall() });
-		log("tap : annulé à la demande (rollback)");
+			log("tap: cancelled on request (rollback)");
 		break;
 	}
 	let v1 = null, used = {};
 	c.foreach("network", "switch_vlan", (s) => { used[s.vlan] = true; if (s.vlan == "1") v1 = s[".name"]; });
-	if (!v1) die("VLAN 1 du commutateur introuvable");
+		if (!v1) die("switch VLAN 1 not found");
 	let idx = 2;
 	while (used[idx]) idx++;
 	let p1 = filter(split(c.get("network", v1, "ports"), " "), (x) => replace(x, /[a-z]/g, "") != ont && replace(x, /[a-z]/g, "") != lb);
@@ -384,7 +384,7 @@ case "untap": {
 			device: "switch0", vlan: "" + idx, vid: opts.vid, ports: `0t ${ont}t ${lb}t` } } ]
 	];
 	if (opts.go != "yes") {
-		print("TAP : voici ce qui serait fait. Rien n'est modifié sans go=yes.\n");
+			print("TAP: here is what would be done. Nothing is modified without go=yes.\n");
 		show_ops(ops);
 		break;
 	}
@@ -392,18 +392,18 @@ case "untap": {
 	remember(sid);
 	stage(sid, ops);
 	call("uci", "apply", { rollback: true, timeout: timeout, ubus_rpc_session: sid });
-	log(`tap : VLAN ${opts.vid} transparent entre les ports ${ont} et ${lb} ; annulation automatique dans ${timeout} s (untap pour annuler avant)`);
+		log(`tap: transparent VLAN ${opts.vid} between ports ${ont} and ${lb}; automatic rollback in ${timeout} s (untap to cancel earlier)`);
 	break;
 }
 
 case "confirm":
 	call("uci", "confirm", { ubus_rpc_session: recall() });
-	log("confirm : configuration CONFIRMÉE à la main");
+	log("confirm: configuration CONFIRMED by hand");
 	break;
 
 case "rollback-now":
 	call("uci", "rollback", { ubus_rpc_session: recall() });
-	log("rollback-now : annulation demandée à la main");
+	log("rollback-now: rollback requested by hand");
 	break;
 
 case "show-prio":
@@ -411,14 +411,14 @@ case "show-prio":
 	break;
 
 case "guard":
-	print(opts.lan_ip, lan_ip_taken() ? " RÉPOND : convert refuserait (la Livebox est encore là)\n" : " ne répond pas : convert pourrait continuer\n");
+	print(opts.lan_ip, lan_ip_taken() ? " ANSWERS: convert would refuse (the Livebox is still there)\n" : " does not answer: convert could continue\n");
 	break;
 
 case "selftest":
-	print("wan_ok() = ", wan_ok() ? "oui" : "non", "\n");
-	print("net_ok() = ", net_ok() ? "oui" : "non", "  (ping 1.1.1.1 et DNS)\n");
+	print("wan_ok() = ", wan_ok() ? "yes" : "no", "\n");
+	print("net_ok() = ", net_ok() ? "yes" : "no", "  (ping 1.1.1.1 and DNS)\n");
 	for (let s in [ "dnsmasq", "firewall", "odhcpd" ])
-		print("service ", s, " actif au démarrage : ", service_enabled(s) ? "oui" : "non", "\n");
+		print("service ", s, " enabled at boot: ", service_enabled(s) ? "yes" : "no", "\n");
 	break;
 
 case "convert-run":
@@ -428,12 +428,12 @@ case "convert-run":
 case "diag": {
 	let sh = (cmdline) => { let p = fs.popen(cmdline + " 2>&1"); let o = p ? p.read("all") : "?"; if (p) p.close(); return o; };
 	let eth = "eth0." + opts.vid;
-	print("== VLAN du commutateur\n", sh("uci show network | grep -E \"switch_vlan|vlan|vid|ports\""));
-	print("== périphérique ", eth, "\n", sh("ls /sys/class/net | grep -E \"^eth0\""), sh(`cat /proc/net/vlan/${eth}`));
-	print("== interface wan\n", sh("ifstatus wan | head -30"));
+	print("== switch VLAN\n", sh("uci show network | grep -E \"switch_vlan|vlan|vid|ports\""));
+	print("== device ", eth, "\n", sh("ls /sys/class/net | grep -E \"^eth0\""), sh(`cat /proc/net/vlan/${eth}`));
+	print("== wan interface\n", sh("ifstatus wan | head -30"));
 	break;
 }
 
 default:
-	die("commande attendue : plan | check | dry-run | convert | restore | tap | untap | confirm | rollback-now | show-prio | guard | selftest | diag");
+	die("expected command: plan | check | dry-run | convert | restore | tap | untap | confirm | rollback-now | show-prio | guard | selftest | diag");
 }

@@ -42,7 +42,9 @@ including its Broadcom powerline (PLC) chip.
 ## Repository layout
 
 - `patches/`: three `git am` patches on top of OpenWrt `main` at commit `6b7ea6896a3a83c9ae80d31e8d35d911e032268f`.
-- `images/`: prebuilt factory, sysupgrade and initramfs images, `SHA256SUMS`, build manifest.
+- `images/`: prebuilt factory, sysupgrade and initramfs images, `SHA256SUMS`, build manifest. They were built
+  **before** the sources were translated to English, so the on-device messages of `plc-bcm` in them are still
+  French; rebuild to get the English ones.
 - `build-image.sh`, `check-image.sh`: build (Linux) and static checks. `build-native.sh`, `build.sh`
   (older; `build.sh` uses Docker and is untested).
 - `tools/plc.uc`, `tools/mme.py`, `tools/plc-service/`: PLC tool (ucode, Python equivalent) and boot service.
@@ -50,7 +52,7 @@ including its Broadcom powerline (PLC) chip.
 - `tools/uplink-ethernet.sh`: switch a Deco from Wi-Fi relay to an Ethernet uplink, reversibly.
 - `tools/orange-livebox-replacement/`: example of replacing an ISP box (Orange France, FTTH) by a Deco.
   Experimental and ISP-specific; see its README.
-- `CLAUDE.md`: instructions for the automated build agent (in French for now).
+- `CLAUDE.md`: instructions for the automated build agent.
 
 ## Contributing
 

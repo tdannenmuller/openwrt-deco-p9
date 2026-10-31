@@ -1,20 +1,20 @@
-# À AJOUTER dans /etc/config/network, APRÈS avoir créé le VLAN 832 dans
-# LuCI > Réseau > Commutateur (port CPU + port WAN choisi, tous les deux "tagués").
-# Ne touche pas aux sections 'lan' / 'wifi-iface' existantes.
+# TO ADD to /etc/config/network, AFTER creating VLAN 832 in
+# LuCI > Network > Switch (CPU port + chosen WAN port, both "tagged").
+# Does not touch the existing 'lan' / 'wifi-iface' sections.
 #
-# À REMPLACER avant usage :
-#   - 11:22:33:AA:BB:CC  -> l'adresse MAC de LA VRAIE Livebox remplacée (pas celle du Deco)
-#   - Livebox4            -> le modèle réel si ce n'est pas une Livebox 4 (voir README.md)
-#   - 0111223344... (clientid/sendopts 61) -> même MAC que macaddr, sans les ':', précédée de 01
+# TO REPLACE before use:
+#   - 11:22:33:AA:BB:CC  -> the MAC address of THE REAL Livebox being replaced (not the Deco's)
+#   - Livebox4            -> the actual model if it is not a Livebox 4 (see README.md)
+#   - 0111223344... (clientid/sendopts 61) -> same MAC as macaddr, without the ':', prefixed with 01
 
-# VÉRIFIÉ sur le fil (capture tcpdump sur un Deco, sans ONT, 30/10/2026) : ce bloc produit un DHCPDISCOVER avec nom d'hôte,
-# classe fournisseur « sagem » (option 60), identifiant client (61), classe utilisateur (77) et option 90, en VLAN 832.
-# NON vérifié : l'acceptation par Orange, la validité du jeton, la priorité 802.1p sur le fil du port WAN.
-# Les options « vendorclass » et « userclass » du gabarit d'origine n'existent pas dans le client DHCP d'OpenWrt (ignorées) ;
-# « sendopts » 12, 60 et 61 faisaient doublon avec hostname, vendorid et clientid : retirés.
+# VERIFIED on the wire (tcpdump capture on a Deco, without an ONT, 30/10/2026): this block produces a DHCPDISCOVER with hostname,
+# vendor class "sagem" (option 60), client identifier (61), user class (77) and option 90, in VLAN 832.
+# NOT verified: acceptance by Orange, token validity, 802.1p priority on the wire of the WAN port.
+# The "vendorclass" and "userclass" options of the original template do not exist in OpenWrt's DHCP client (ignored);
+# "sendopts" 12, 60 and 61 duplicated hostname, vendorid and clientid: removed.
 
-# Marquage de priorité 802.1p (point 4 du README) : sans « type/ifname/vid » la section est ignorée (vérifié : p 0 sur le fil) ;
-# complète, les trames DHCP sortent en « vlan 832, p 6 » (vérifié côté processeur ; port du commutateur non vérifié).
+# 802.1p priority marking (README item 4): without "type/ifname/vid" the section is ignored (verified: p 0 on the wire);
+# complete, the DHCP frames go out as "vlan 832, p 6" (verified on the processor side; switch port not verified).
 config device
 	option name 'eth0.832'
 	option type '8021q'
@@ -37,8 +37,8 @@ config interface 'wan'
 	list sendopts '77:2b46535644534c5f6c697665626f782e496e7465726e65742e736f66746174686f6d652e4c697665626f7834'
 	list sendopts '90:XAUTH'
 
-# NON TESTÉ (IPv6) : le fil lafibre.info dit que le clientid DHCPv6 doit être « 00030001 » + la MAC de la Livebox sans « : »
-# (comme l'IPv4), pas la valeur d'exemple ci-dessous.
+# NOT TESTED (IPv6): the lafibre.info forum says the DHCPv6 clientid must be "00030001" + the Livebox MAC without ":"
+# (like IPv4), not the example value below.
 config interface 'wan6'
 	option auto '0'
 	option proto 'dhcpv6'

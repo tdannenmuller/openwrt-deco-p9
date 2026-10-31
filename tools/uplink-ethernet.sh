@@ -1,50 +1,50 @@
 #!/bin/sh
-# Passe un Deco d'une liaison montante Wi-Fi (client « wwan » + relayd) à une liaison montante ETHERNET :
-# le Deco devient un simple pont (comme le Deco 2), relié à la Livebox par câble sur un de ses deux ports.
-# Réversible : l'état d'origine est sauvegardé dans /root/backup-uplink et « off » le restaure.
+# Switches a Deco from a Wi-Fi uplink ("wwan" client + relayd) to an ETHERNET uplink:
+# the Deco becomes a plain bridge, cabled to the upstream router on one of its two ports.
+# Reversible: the original state is saved in /root/backup-uplink and "off" restores it.
 #
 #   uplink-ethernet.sh status
-#   uplink-ethernet.sh on  [secondes]    désactive client Wi-Fi + relais, fixe le canal 5 GHz, applique après le délai
-#   uplink-ethernet.sh off [secondes]    restaure la configuration d'origine
-# Variables : CHAN=<canal 5 GHz sans DFS> (défaut 36) ; RADIO5=<radio 5 GHz> (défaut radio0).
+#   uplink-ethernet.sh on  [secondes]    disables the Wi-Fi client + relay, sets the 5 GHz channel, applies after the delay
+#   uplink-ethernet.sh off [secondes]    restores the original configuration
+# Variables: CHAN=<non-DFS 5 GHz channel> (default 36); RADIO5=<5 GHz radio> (default radio0).
 #
-# ORDRE À RESPECTER : lancer « on » AVANT de brancher le câble. Avec le Wi-Fi client et relayd encore actifs, un câble
-# vers la Livebox ferait deux chemins entre le Deco et la Livebox : boucle réseau (tempête de diffusion).
-# Entre « on » et le câble, ce Deco (et tout ce qui passe par lui, dont le CPL) n'a pas de liaison montante.
+# ORDER MATTERS: run "on" BEFORE plugging in the cable. With the Wi-Fi client and relayd still active, a cable
+# to the upstream router would create two paths between the Deco and the router: a network loop (broadcast storm).
+# Between "on" and the cable, this Deco (and everything behind it, PLC included) has no uplink.
 
 BK=/root/backup-uplink
 RADIO5="${RADIO5:-radio0}"
 CHAN="${CHAN:-36}"
 
-die() { echo "ERREUR : $*" >&2; exit 1; }
+die() { echo "ERROR: $*" >&2; exit 1; }
 
 sta_sections() { uci show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)\.mode='sta'$/\1/p"; }
 
-apply_later() {  # $1 = délai, $2 = commande relayd (stop|restart)
-	# « ifup lan » à la fin : constaté sur un Deco, la route par défaut de « lan » (gateway) n'était pas réinstallée
-	# dans le noyau par le simple rechargement du réseau après l'arrêt du relais.
+apply_later() {  # $1 = delay, $2 = relayd command (stop|restart)
+	# "ifup lan" at the end: observed on a Deco, the default route of "lan" (gateway) was not reinstalled
+	# in the kernel by the plain network reload after the relay stopped.
 	setsid sh -c "sleep $1; /etc/init.d/relayd $2; /etc/init.d/network reload; wifi reload; sleep 8; ifup lan" </dev/null >/dev/null 2>&1 &
-	echo "application dans $1 s (réseau et Wi-Fi rechargés ; ce Deco peut devenir injoignable)"
+	echo "applying in $1 s (network and Wi-Fi reloaded; this Deco may become unreachable)"
 }
 
 case "$1" in
 status)
-	echo "== sauvegarde : $([ -d $BK ] && echo "présente ($BK) : liaison Ethernet préparée ou active" || echo "absente : configuration d'origine")"
-	echo "== client Wi-Fi :"
+	echo "== backup: $([ -d $BK ] && echo "present ($BK): Ethernet uplink prepared or active" || echo "absent: original configuration")"
+	echo "== Wi-Fi client:"
 	for s in $(sta_sections); do echo "  $s : $(uci -q get wireless.$s.ssid) disabled=$(uci -q get wireless.$s.disabled || echo 0)"; done
 	for s in wwan relay_bridge; do uci -q get network.$s.proto >/dev/null && echo "  network.$s : disabled=$(uci -q get network.$s.disabled || echo 0)"; done
-	echo "== $RADIO5 : canal $(uci -q get wireless.$RADIO5.channel)"
-	echo "== relayd : $(pidof relayd >/dev/null && echo "EN COURS" || echo arrêté)"
-	echo "== liens Ethernet (ports 3 et 5) :"; swconfig dev switch0 show 2>/dev/null | grep -E "link: port:(3|5) "
+	echo "== $RADIO5: channel $(uci -q get wireless.$RADIO5.channel)"
+	echo "== relayd: $(pidof relayd >/dev/null && echo "RUNNING" || echo stopped)"
+	echo "== Ethernet links (ports 3 and 5):"; swconfig dev switch0 show 2>/dev/null | grep -E "link: port:(3|5) "
 	if pidof relayd >/dev/null && swconfig dev switch0 show 2>/dev/null | grep -E "link: port:(3|5) .*link:up" >/dev/null; then
-		echo "!! ATTENTION : relayd tourne ET un câble est branché : boucle possible vers la Livebox"
+		echo "!! WARNING: relayd is running AND a cable is plugged in: possible loop to the upstream router"
 	fi
-	echo "== liaison montante : $(ip route | grep ^default | head -1)"
+	echo "== uplink: $(ip route | grep ^default | head -1)"
 	;;
 on)
-	[ -d "$BK" ] && die "déjà préparé ($BK existe) : lancer 'off' pour revenir à l'état d'origine"
-	mkdir -p "$BK" || die "impossible de créer $BK"
-	cp /etc/config/network /etc/config/wireless "$BK"/ || die "sauvegarde impossible"
+	[ -d "$BK" ] && die "already prepared ($BK exists): run 'off' to return to the original state"
+	mkdir -p "$BK" || die "cannot create $BK"
+	cp /etc/config/network /etc/config/wireless "$BK"/ || die "backup failed"
 	uci -q get "wireless.$RADIO5.channel" > "$BK/radio5.channel"
 	for s in wwan relay_bridge; do
 		uci -q get network.$s.proto >/dev/null && uci set network.$s.disabled=1
@@ -52,16 +52,16 @@ on)
 	for s in $(sta_sections); do uci set wireless.$s.disabled=1; done
 	uci set "wireless.$RADIO5.channel=$CHAN"
 	uci commit network; uci commit wireless
-	echo "configuration modifiée (sauvegarde : $BK) ; canal $RADIO5 : $(cat $BK/radio5.channel) -> $CHAN"
+	echo "configuration changed (backup: $BK); $RADIO5 channel: $(cat $BK/radio5.channel) -> $CHAN"
 	apply_later "${2:-20}" stop
-	echo "=> brancher le câble Livebox -> port LAN du Deco APRÈS ce délai"
+	echo "=> plug the cable upstream router -> Deco LAN port AFTER this delay"
 	;;
 off)
-	[ -d "$BK" ] || die "pas de sauvegarde ($BK absent) : rien à restaurer"
-	cp "$BK/network" "$BK/wireless" /etc/config/ || die "restauration impossible"
+	[ -d "$BK" ] || die "no backup ($BK missing): nothing to restore"
+	cp "$BK/network" "$BK/wireless" /etc/config/ || die "restore failed"
 	rm -rf "$BK"
-	echo "configuration d'origine restaurée"
-	echo "=> DÉBRANCHER le câble vers la Livebox avant l'application (sinon boucle avec relayd)"
+	echo "original configuration restored"
+	echo "=> UNPLUG the cable to the upstream router before it applies (otherwise a loop with relayd)"
 	apply_later "${2:-20}" restart
 	;;
 *)

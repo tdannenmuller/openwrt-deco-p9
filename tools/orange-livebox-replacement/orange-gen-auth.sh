@@ -1,7 +1,7 @@
 #!/bin/sh
-# Génère le jeton d'authentification Orange (option 90/11) et le réinjecte dans la config.
-# À relancer au démarrage et à chaque coupure WAN (voir orange-auth-init.sh et 97-orange-config).
-# Jamais exécuté avec de vrais identifiants : voir README.md, "Ce qui n'est PAS vérifié".
+# Generates the Orange authentication token (option 90/11) and injects it back into the config.
+# To be rerun at boot and on every WAN drop (see orange-auth-init.sh and 97-orange-config).
+# Never run with real credentials: see README.md, "What the rollback does not cover".
 . /etc/config/orange-auth
 
 SALT_PREFIX="1234567890123"
@@ -30,7 +30,7 @@ AUTH="00:00:00:00:00:00:00:00:00:00:00\
 :$(tl 3C $((2+SALT_LEN))):$(str_hex "$SALT")\
 :$(tl 03 $((2+1+SALT_LEN))):$(str_hex "$BYTE"):${MD5S}"
 
-# AUTH_ONLY=1 : affiche seulement le jeton (pour « to-router.uc convert auth=... ») sans toucher à la configuration.
+# AUTH_ONLY=1: only prints the token (for "to-router.uc convert auth=...") without touching the configuration.
 if [ -n "$AUTH_ONLY" ]; then
     echo "$AUTH"
     exit 0
@@ -43,4 +43,4 @@ uci -q del_list network.wan6.sendopts="$(uci get network.wan6.sendopts | tr ' ' 
 uci add_list network.wan6.sendopts="11:${AUTH}"
 
 uci commit network
-logger -t orange-auth "Auth appliqué salt=${SALT} len=$(echo -n "$AUTH" | wc -c)"
+logger -t orange-auth "Auth applied salt=${SALT} len=$(echo -n "$AUTH" | wc -c)"

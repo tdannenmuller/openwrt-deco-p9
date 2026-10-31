@@ -1,6 +1,6 @@
 #!/bin/bash
-# Build de l'image Deco P9. A lancer sur le Mac (ou tout hote avec Docker).
-# Le code et le build vivent dans un VOLUME Docker (ext4 Linux), pas dans un dossier macOS.
+# Builds the Deco P9 image. Run on any host with Docker (untested).
+# The code and the build live in a Docker VOLUME (Linux ext4), not in a macOS folder.
 set -euo pipefail
 PATCHES_DIR="$(cd "$(dirname "$0")" && pwd)/patches"
 docker build -t openwrt-builder "$(dirname "$0")"
@@ -12,7 +12,7 @@ docker run --rm -it -v openwrt-src:/home/builder -v "$PATCHES_DIR":/patches:ro o
   [ -d openwrt ] || git clone https://github.com/openwrt/openwrt.git
   cd openwrt
   git fetch origin
-  # IMPORTANT: les patchs ont ete faits sur main au commit 6b7ea6896a. Pour un build reproductible :
+  # IMPORTANT: the patches were made on main at commit 6b7ea6896a. For a reproducible build:
   git checkout -B deco-p9 6b7ea6896a
   git am /patches/*.patch
   ./scripts/feeds update -a && ./scripts/feeds install -a
@@ -24,7 +24,7 @@ CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y
 CONFIG_PACKAGE_relayd=y
 CONFIG_PACKAGE_luci-proto-relay=y
-# Pilote ath10k-ct (par defaut, comme le M4R). Variante non-ct : voir docs/build.md
+# ath10k-ct driver (default, like the M4R). Non-ct variant: see docs/build.md
 CFG
   make defconfig
   make download -j8

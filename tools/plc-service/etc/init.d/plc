@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Écrit la NMK de /etc/config/plc sur la puce CPL Broadcom du Deco P9.
+# Writes the NMK from /etc/config/plc to the Broadcom powerline chip of the Deco P9.
 
 START=99
 USE_PROCD=1

@@ -1,7 +1,7 @@
-# Remplis ces deux lignes avec TES identifiants Orange (espace client, pas le Wi-Fi).
-# NE COMMITE JAMAIS ce fichier avec de vraies valeurs : garde-le hors de git une fois rempli
-# (il est dans .gitignore sous ce nom une fois copié sur le Deco, mais vérifie avant de committer).
-LOGIN="ton_identifiant_orange_sans_fti_slash"
-PASSWORD="ton_mot_de_passe_orange"
+# Fill in these two lines with YOUR Orange credentials (customer account, not Wi-Fi).
+# NEVER COMMIT this file with real values: keep it out of git once filled in
+# (it is in .gitignore under this name once copied to the Deco, but check before committing).
+LOGIN="your_orange_login_without_fti_slash"
+PASSWORD="your_orange_password"
 BYTE="A"
 SALT_PREFIX="1234567890123"

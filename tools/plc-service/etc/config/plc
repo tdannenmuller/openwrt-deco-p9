@@ -1,5 +1,5 @@
 config plc 'main'
 	option enabled '0'
-	# NMK du réseau CPL : 32 caractères hexadécimaux, identique sur tous les Deco.
-	# Ne pas la publier ni la mettre dans l'image.
+	# Powerline network NMK: 32 hexadecimal characters, the same on every Deco.
+	# Do not publish it or put it in an image.
 	option nmk ''
