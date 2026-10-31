@@ -43,5 +43,3 @@ Tested on two TP-Link Deco P9 units (hardware tested by one person, Oct 2026), O
 - A `sysupgrade` keeps `/etc/config` but not packages or `/etc/rc.d` links installed by hand: anything you
   added (for example `relayd` before it was in the image) must be reinstalled.
 - The prebuilt image ships a **public** default powerline key. Change it.
-- The prebuilt images in `images/` predate the English translation of the `plc-bcm` messages; rebuild for the
-  English log text (`NMK written and verified`, `NMK already up to date`).
