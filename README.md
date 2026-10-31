@@ -62,5 +62,7 @@ verified and what you did not. Do not post private keys (NMK), ISP credentials, 
 
 ## License
 
-Patches follow the licenses of the files they modify (GPL-2.0 for OpenWrt). Tools and documentation in this
-repository: see the license file once one is added (the maintainer still has to choose it).
+Like OpenWrt, this repository is under the **GNU General Public License version 2 only**
+(`SPDX-License-Identifier: GPL-2.0-only`); the full text is in [LICENSE](LICENSE), copied from OpenWrt.
+The patches modify OpenWrt files and follow their licenses. By contributing you agree to publish your
+contribution under the same terms.
