@@ -12,13 +12,17 @@ checks pass). Result in `out/`. The base commit is `6b7ea6896a3a83c9ae80d31e8d35
 another build will differ (timestamps).
 
 The default config adds `luci`, `luci-ssl`, `kmod-ath10k-ct`, `ath10k-firmware-qca9888-ct`, `relayd` and
-`luci-proto-relay`; `plc-bcm` comes with the device profile.
+`luci-proto-relay`, and for a VPN and dynamic DNS `kmod-wireguard`, `wireguard-tools`, `luci-proto-wireguard`,
+`ddns-scripts` and `ddns-scripts-cloudflare` (the last one pulls in `curl`). `kmod-wireguard` has to be built with
+the image: the official kernel-module feeds are for another kernel build, so it cannot be installed with `apk`
+afterwards. `plc-bcm` comes with the device profile.
 
 ## Verify the image
 
 `./check-image.sh` (writes nothing) checks: package built, images present, sysupgrade size under 13824k,
-`product_name:P9`, manifest (plc-bcm, ucode modules, relayd, luci-proto-relay), rootfs content
-(`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, `S99plc`, `relayd`, `/etc/config/plc`), and the port-2 entry in `02_network`.
+`product_name:P9`, manifest (plc-bcm, ucode modules, relayd, luci-proto-relay, WireGuard and DDNS packages, curl), rootfs content
+(`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, `S99plc`, `relayd`, `/etc/config/plc`, `/usr/bin/wg`, `wireguard.ko`, the
+Cloudflare DDNS script), and the port-2 entry in `02_network`.
 
 Manual checks worth doing:
 - `strings -n 20 factory.bin | grep product_name`

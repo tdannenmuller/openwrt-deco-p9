@@ -43,11 +43,19 @@ CONFIG_PACKAGE_luci-ssl=y
 # removes it while its configuration is kept: the Deco then loses its link to the upstream router.
 CONFIG_PACKAGE_relayd=y
 CONFIG_PACKAGE_luci-proto-relay=y
+# WireGuard server and Cloudflare dynamic DNS. kmod-wireguard must be built with the image: the official kernel
+# module feeds do not match a custom kernel build, so it cannot be installed afterwards with apk.
+CONFIG_PACKAGE_kmod-wireguard=y
+CONFIG_PACKAGE_wireguard-tools=y
+CONFIG_PACKAGE_luci-proto-wireguard=y
+CONFIG_PACKAGE_ddns-scripts=y
+CONFIG_PACKAGE_ddns-scripts-cloudflare=y
 CFG
 make defconfig
 
 # plc-bcm must come from DEVICE_PACKAGES (patch 0003), not from this file; relayd comes from the .config above.
-for opt in plc-bcm ucode-mod-fs ucode-mod-socket ucode-mod-uci relayd luci-proto-relay; do
+for opt in plc-bcm ucode-mod-fs ucode-mod-socket ucode-mod-uci relayd luci-proto-relay \
+		kmod-wireguard wireguard-tools luci-proto-wireguard ddns-scripts ddns-scripts-cloudflare; do
 	grep -q "^CONFIG_PACKAGE_$opt=y" .config || { echo "ERROR: $opt is not selected in .config"; exit 1; }
 done
 

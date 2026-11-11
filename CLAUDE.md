@@ -18,7 +18,7 @@ Read `docs/status.md` and `docs/powerline.md` first (powerline and the `plc-bcm`
 ```
 Linux machine with the OpenWrt toolchain (packages listed in `docs/build.md`). Variables: `WORK` (work directory), `PUBLISH=1` (also copies to `images/` and regenerates `SHA256SUMS`, only after the checks pass). The first build is long. The result is copied to `out/` (ignored by git).
 
-`check-image.sh` checks: package built, images present, sysupgrade size <= 13824k, `product_name:P9`, manifest (plc-bcm, ucode-mod-socket, -uci, -fs, relayd, luci-proto-relay), rootfs content (`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, link `/etc/rc.d/S99plc`, `/usr/sbin/relayd` and its `S*relayd` link, `/etc/config/plc` with the default NMK, `ucode` modules), and `02_network` with port 2. It writes nothing.
+`check-image.sh` checks: package built, images present, sysupgrade size <= 13824k, `product_name:P9`, manifest (plc-bcm, ucode-mod-socket, -uci, -fs, relayd, luci-proto-relay, kmod-wireguard, wireguard-tools, luci-proto-wireguard, ddns-scripts, ddns-scripts-cloudflare, curl), rootfs content (`/usr/sbin/plc-nmk`, `/etc/init.d/plc`, link `/etc/rc.d/S99plc`, `/usr/sbin/relayd` and its `S*relayd` link, `/etc/config/plc` with the default NMK, `ucode` modules, `/usr/bin/wg`, `wireguard.ko`, the Cloudflare DDNS script), and `02_network` with port 2. It writes nothing. The WireGuard and DDNS packages come from the `.config` written by `build-image.sh`, not from a patch: like `relayd`, they have never been built yet.
 
 Also do the manual checks of `docs/build.md` ("Verify the image"): header comparison with an official M4R image, `hsqs` magic.
 

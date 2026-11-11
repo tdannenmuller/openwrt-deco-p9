@@ -27,7 +27,8 @@ chk "sysupgrade image present" "[ -n \"$SYSUP\" ]"
 chk "factory image present"    "[ -n \"$FACT\" ]"
 [ -n "$SYSUP" ] && chk "sysupgrade <= 13824k (14155776 bytes): $(stat -c %s "$SYSUP" 2>/dev/null) bytes" "[ $(stat -c %s "$SYSUP") -le 14155776 ]"
 [ -n "$FACT" ]  && chk "factory: product_name P9" "strings -n 8 '$FACT' | grep -q 'product_name:P9'"
-[ -n "$MANIF" ] && for p in plc-bcm ucode-mod-socket ucode-mod-uci ucode-mod-fs ucode relayd luci-proto-relay; do
+[ -n "$MANIF" ] && for p in plc-bcm ucode-mod-socket ucode-mod-uci ucode-mod-fs ucode relayd luci-proto-relay \
+		kmod-wireguard wireguard-tools luci-proto-wireguard ddns-scripts ddns-scripts-cloudflare curl; do
 	chk "manifest: $p" "grep -q '^$p ' '$MANIF'"
 done
 
@@ -44,6 +45,9 @@ else
 	for m in socket uci fs; do chk "ucode module $m.so" "[ -f '$ROOT/usr/lib/ucode/$m.so' ]"; done
 	chk "/usr/sbin/relayd present"      "[ -x '$ROOT/usr/sbin/relayd' ]"
 	chk "/etc/rc.d/S*relayd (enabled at boot)" "ls '$ROOT'/etc/rc.d/S*relayd"
+	chk "/usr/bin/wg present (wireguard-tools)" "[ -x '$ROOT/usr/bin/wg' ]"
+	chk "wireguard.ko in the kernel modules" "find '$ROOT'/lib/modules -name 'wireguard.ko' | grep -q ."
+	chk "Cloudflare DDNS script present" "[ -f '$ROOT/usr/lib/ddns/update_cloudflare_com_v4.sh' ]"
 	chk "02_network: port 2 for the P9" "awk '/deco-p9-v1v2/{f=1} f&&/2:lan:3/{ok=1} END{exit !ok}' '$ROOT/etc/board.d/02_network'"
 fi
 
