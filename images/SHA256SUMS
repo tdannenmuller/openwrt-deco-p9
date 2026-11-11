@@ -1,3 +1,3 @@
-ac491ec239e0762bcbb752ab95e817ba2f8f1ed6d98e494dc0622120e580f374  openwrt-ath79-generic-tplink_deco-p9-v1v2-initramfs-kernel.bin
-7b08e4a2987bf10ffc1cbb729a0c7a3a45e9294ff9d83c55631fb20a7fd1218b  openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-factory.bin
-06d3670db6c8ba3bd500de604c77083828bb6d8fea3bce2eed4c95974736199b  openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-sysupgrade.bin
+c0f7508ae75342a92a732857d344064f8aad8d9e589ac83df6cf5bc345f96994  openwrt-ath79-generic-tplink_deco-p9-v1v2-initramfs-kernel.bin
+2579d698e834cbd25fd1c670dd75ed4d4f6b1be504d8a7bd30114b309c5e91a7  openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-factory.bin
+555d7c7dfc3a1b8974c650649486da4cf313f3f045aba7453c0b10bc6fd259ff  openwrt-ath79-generic-tplink_deco-p9-v1v2-squashfs-sysupgrade.bin
